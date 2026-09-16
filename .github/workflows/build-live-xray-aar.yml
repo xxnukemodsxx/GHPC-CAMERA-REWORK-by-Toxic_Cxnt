@@ -92,4 +92,6 @@ jobs:
           path: |
             dist/GHPC_LiveAAR.dll
             dist/BUILD_INFO.txt
+            build-src/GHPCLiveAARMod.cs
+            build-src/LiveXrayCore.cs
           if-no-files-found: error
