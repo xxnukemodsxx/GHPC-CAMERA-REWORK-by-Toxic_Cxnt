@@ -358,8 +358,13 @@ namespace GHPCNativeLiveAAR
                 if (dgo != null) R.Set(dgo, "layer", layer);
 
                 object mats = R.Get(sr, "sharedMaterials");
-                if (hasRule && rule.Highlighted && rule.SwitchMaterials && rule.AarMaterial != null)
+                if (hasRule && rule.SwitchMaterials && rule.AarMaterial != null)
                     mats = U.MaterialArray(rule.AarMaterial, Math.Max(1, U.ArrayLen(mats)));
+                else if (directHit)
+                {
+                    Array dmg = U.SolidMaterials(Math.Max(1, U.ArrayLen(mats)), 1f, .28f, .03f, 1f);
+                    if (dmg != null) mats = dmg;
+                }
 
                 R.Set(dr, "sharedMaterials", mats);
                 R.Set(dr, "enabled", true);
