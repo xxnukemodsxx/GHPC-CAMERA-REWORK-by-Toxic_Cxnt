@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using MelonLoader;
 
-[assembly: MelonInfo(typeof(GHPCNativeLiveAAR.Mod), "GHPC Native Live AAR", "1.0.3-scratch", "Toxic_Cxnt")]
+[assembly: MelonInfo(typeof(GHPCNativeLiveAAR.Mod), "GHPC Native Live AAR", "1.0.4-scratch", "Toxic_Cxnt")]
 [assembly: MelonGame("Radian Simulations LLC", "GHPC")]
 
 namespace GHPCNativeLiveAAR
@@ -13,7 +13,7 @@ namespace GHPCNativeLiveAAR
         public override void OnInitializeMelon()
         {
             LiveAar.Initialize();
-            MelonLogger.Msg("GHPC Native Live AAR scratch v1.0.2 loaded.");
+            MelonLogger.Msg("GHPC Native Live AAR scratch v1.0.4 loaded.");
         }
 
         public override void OnUpdate() { LiveAar.Tick(); }
