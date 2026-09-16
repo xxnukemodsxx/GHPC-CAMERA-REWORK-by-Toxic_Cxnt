@@ -13,7 +13,7 @@ namespace GHPCNativeLiveAAR
         public override void OnInitializeMelon()
         {
             LiveAar.Initialize();
-            MelonLogger.Msg("GHPC Native Live AAR scratch build loaded.");
+            MelonLogger.Msg("GHPC Native Live AAR scratch v1.0.2 loaded.");
         }
 
         public override void OnUpdate() { LiveAar.Tick(); }
@@ -106,18 +106,62 @@ namespace GHPCNativeLiveAAR
 
         private static object FindTarget(object shot)
         {
-            List<object> killed = R.List(R.Get(shot, "KilledUnits"));
-            if (killed.Count > 0) return killed[killed.Count - 1];
-
-            List<object> hit = R.List(R.Get(shot, "HitUnits"));
-            if (hit.Count > 0) return hit[hit.Count - 1];
-
+            // The vanilla AAR/damage hierarchy hangs off the actual hit vehicle recorded
+            // in ShotInfo frames. HitUnits/KilledUnits can be higher-level unit wrappers
+            // that do not own AarVisual/AarModel children.
             List<object> frames = R.List(R.Get(shot, "AllShotFrames"));
             for (int i = frames.Count - 1; i >= 0; i--)
             {
-                object unit = R.Get(frames[i], "HitVehicle");
-                if (unit != null) return unit;
+                object vehicle = R.Get(frames[i], "HitVehicle");
+                if (vehicle != null)
+                {
+                    Log("target resolved from ShotFrame.HitVehicle: " + vehicle.GetType().FullName);
+                    return vehicle;
+                }
+
+                object model = R.Get(frames[i], "HitModel");
+                if (model != null)
+                {
+                    object go = R.Get(model, "gameObject");
+                    object tr = go == null ? null : R.Get(go, "transform");
+                    object cur = tr;
+                    for (int up = 0; cur != null && up < 16; up++)
+                    {
+                        object cg = R.Get(cur, "gameObject");
+                        if (cg != null)
+                        {
+                            Type dv = R.Find("DamageableVehicle");
+                            if (dv != null)
+                            {
+                                object comp = U.GetComponent(cg, dv);
+                                if (comp != null)
+                                {
+                                    Log("target resolved from ShotFrame.HitModel parent: " + comp.GetType().FullName);
+                                    return comp;
+                                }
+                            }
+                        }
+                        cur = R.Get(cur, "parent");
+                    }
+                }
             }
+
+            List<object> killed = R.List(R.Get(shot, "KilledUnits"));
+            if (killed.Count > 0)
+            {
+                object unit = killed[killed.Count - 1];
+                Log("target fallback from KilledUnits: " + (unit == null ? "null" : unit.GetType().FullName));
+                return unit;
+            }
+
+            List<object> hit = R.List(R.Get(shot, "HitUnits"));
+            if (hit.Count > 0)
+            {
+                object unit = hit[hit.Count - 1];
+                Log("target fallback from HitUnits: " + (unit == null ? "null" : unit.GetType().FullName));
+                return unit;
+            }
+
             return null;
         }
 
