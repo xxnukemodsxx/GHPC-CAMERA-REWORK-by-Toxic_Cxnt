@@ -62,7 +62,7 @@ namespace GHPCNativeLiveAAR
             {
                 state.Begin(shot, aarRootGo, vehicleGo);
                 CloneNativeAarRenderers(aarRootGo, sourceRoot, stageTr, tmap, state);
-                CloneVehicleShell(aarRootGo, sourceRoot, stageTr, tmap, state);
+                CloneVehicleShell(vehicleGo, aarRootGo, sourceRoot, stageTr, tmap, state);
             }
             finally
             {
@@ -73,7 +73,7 @@ namespace GHPCNativeLiveAAR
                 throw new InvalidOperationException("GHPC exposed no AAR or vehicle renderers for this target");
 
             ApplyRecordedCrewState(targetUnit, pose, state.RendererMap);
-            FitCameras(visualRoot);
+            FitCameras();
             CreateShotLines(shot, sourceRoot, stageTr);
             _hideAt = DateTime.UtcNow.AddSeconds(8);
             _active = true;
