@@ -1,0 +1,643 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Reflection;
+
+namespace GHPCNativeLiveAAR
+{
+    internal sealed class NativeAarStage
+    {
+        private readonly List<object> _created = new List<object>();
+        private object _root;
+        private object _baseCam;
+        private object _xrayCam;
+        private int _aarLayer = 30;
+        private int _xrayLayer = 31;
+        private float _radius = 3f;
+        private DateTime _hideAt;
+        private bool _active;
+
+        internal void Tick()
+        {
+            if (_active && DateTime.UtcNow >= _hideAt) Hide();
+        }
+
+        internal void Hide()
+        {
+            _active = false;
+            for (int i = _created.Count - 1; i >= 0; i--) U.Destroy(_created[i]);
+            _created.Clear();
+            _root = _baseCam = _xrayCam = null;
+        }
+
+        internal void Show(object shot, object targetUnit)
+        {
+            Hide();
+            U.Init();
+            ResolveLayers();
+
+            object targetGo = R.Get(targetUnit, "gameObject");
+            if (targetGo == null) targetGo = R.Call(targetUnit, "get_gameObject");
+            if (targetGo == null) targetGo = R.Call(targetUnit, "GHPC.IUnit.get_gameObject");
+            if (targetGo == null) throw new InvalidOperationException("target GameObject unavailable");
+
+            object sourceRoot = R.Get(targetGo, "transform");
+            if (sourceRoot == null) throw new InvalidOperationException("target transform unavailable");
+
+            _root = U.GO("GHPC_NativeLiveAAR_Stage");
+            _created.Add(_root);
+            object stageTr = R.Get(_root, "transform");
+            R.Set(stageTr, "position", U.V(0f, -100000f, 0f));
+
+            Dictionary<object, object> tmap = new Dictionary<object, object>(RefEq.Instance);
+            object visualRoot = CloneTransformTree(sourceRoot, stageTr, tmap);
+
+            object pose = FindRecordedPose(shot, targetUnit);
+            ApplyRecordedPose(pose, tmap);
+
+            NativeCaptureState state = new NativeCaptureState();
+            try
+            {
+                state.Begin(shot, targetGo);
+                CloneNativeAarRenderers(targetGo, tmap, state);
+            }
+            finally
+            {
+                state.Restore();
+            }
+
+            if (state.ClonedRendererCount == 0)
+                throw new InvalidOperationException("GHPC exposed no AAR renderers for this vehicle");
+
+            ApplyRecordedCrewState(targetUnit, pose, state.RendererMap);
+            FitCameras(visualRoot);
+            CreateShotLines(shot, sourceRoot, stageTr);
+            _hideAt = DateTime.UtcNow.AddSeconds(8);
+            _active = true;
+
+            LiveAar.Log("native snapshot: AarVisual=" + state.AarVisualCount +
+                        ", AarModel=" + state.AarModelCount +
+                        ", renderers=" + state.ClonedRendererCount);
+        }
+
+        private void ResolveLayers()
+        {
+            int a = 30, x = 31;
+            try
+            {
+                Type t = R.Find("GHPC.ConstantsAndInfoManager");
+                object inst = R.GetStatic(t, "Instance");
+                if (inst != null)
+                {
+                    a = R.Int(inst, "AarLayer", a);
+                    x = R.Int(inst, "XrayOnlyLayer", x);
+                }
+            }
+            catch { }
+
+            if (a < 0 || a > 31) a = 30;
+            if (x < 0 || x > 31 || x == a) x = a == 31 ? 30 : 31;
+            _aarLayer = a;
+            _xrayLayer = x;
+        }
+
+        private object CloneTransformTree(object srcRoot, object parent, Dictionary<object, object> map)
+        {
+            object rootGo = U.GO("NativeAarVisualRoot");
+            _created.Add(rootGo);
+            object dstRoot = R.Get(rootGo, "transform");
+            R.Call(dstRoot, "SetParent", parent, false);
+            R.Set(dstRoot, "localPosition", U.V(0, 0, 0));
+            R.Set(dstRoot, "localRotation", U.QIdentity());
+            R.Set(dstRoot, "localScale", R.Get(srcRoot, "localScale"));
+            map[srcRoot] = dstRoot;
+            CloneChildren(srcRoot, dstRoot, map);
+            return rootGo;
+        }
+
+        private void CloneChildren(object src, object dst, Dictionary<object, object> map)
+        {
+            int count = R.Int(src, "childCount", 0);
+            for (int i = 0; i < count; i++)
+            {
+                object sc = R.Call(src, "GetChild", i);
+                if (sc == null) continue;
+                string name = R.Str(sc, "name");
+                object go = U.GO(string.IsNullOrEmpty(name) ? "part" : name);
+                _created.Add(go);
+                object dc = R.Get(go, "transform");
+                R.Call(dc, "SetParent", dst, false);
+                R.Set(dc, "localPosition", R.Get(sc, "localPosition"));
+                R.Set(dc, "localRotation", R.Get(sc, "localRotation"));
+                R.Set(dc, "localScale", R.Get(sc, "localScale"));
+                map[sc] = dc;
+                CloneChildren(sc, dc, map);
+            }
+        }
+
+        private object FindRecordedPose(object shot, object targetUnit)
+        {
+            List<object> poses = R.List(R.Get(shot, "UnitPoses"));
+            for (int i = 0; i < poses.Count; i++)
+            {
+                object p = poses[i];
+                if (p != null && object.ReferenceEquals(R.Get(p, "Unit"), targetUnit)) return p;
+            }
+            return null;
+        }
+
+        private void ApplyRecordedPose(object pose, Dictionary<object, object> map)
+        {
+            if (pose == null) return;
+            List<object> posed = R.List(R.Get(pose, "PosedTransforms"));
+            for (int i = 0; i < posed.Count; i++)
+            {
+                object pr = posed[i];
+                object src = R.Get(pr, "Trans");
+                object dst;
+                if (src == null || !map.TryGetValue(src, out dst)) continue;
+
+                object psrc = R.Get(pr, "Parent");
+                object pdst;
+                if (psrc != null && map.TryGetValue(psrc, out pdst))
+                    R.Call(dst, "SetParent", pdst, false);
+
+                object pos = R.Get(pr, "Pos");
+                object rot = R.Get(pr, "Rot");
+                if (pos != null) R.Set(dst, "localPosition", pos);
+                if (rot != null) R.Set(dst, "localRotation", rot);
+            }
+        }
+
+        private void CloneNativeAarRenderers(object targetGo, Dictionary<object, object> tmap, NativeCaptureState state)
+        {
+            List<object> all = U.Components(targetGo, U.RendererType, true);
+            HashSet<object> selected = new HashSet<object>(RefEq.Instance);
+
+            foreach (object r in state.AarVisualRules.Keys) selected.Add(r);
+            foreach (object r in state.AarModelRenderers) selected.Add(r);
+
+            // Never fall back to the whole live vehicle if native AAR metadata exists.
+            // That fallback was the reason the old builds looked like a miniature normal tank.
+            if (selected.Count == 0)
+                throw new InvalidOperationException("vehicle has no native AarVisual/AarModel renderer set");
+
+            for (int i = 0; i < all.Count; i++)
+            {
+                object sr = all[i];
+                if (sr == null || !selected.Contains(sr)) continue;
+
+                object st = R.Get(sr, "transform");
+                object dt;
+                if (st == null || !tmap.TryGetValue(st, out dt)) continue;
+
+                AarRule rule;
+                bool hasRule = state.AarVisualRules.TryGetValue(sr, out rule);
+                bool modelOnly = state.AarModelRenderers.Contains(sr);
+
+                object dr = CloneRenderer(sr, dt, tmap);
+                if (dr == null) continue;
+
+                int layer = modelOnly ? _xrayLayer : _aarLayer;
+                if (hasRule && rule.Mode == 1) layer = _xrayLayer;
+
+                object dgo = R.Get(dt, "gameObject");
+                R.Set(dgo, "layer", layer);
+
+                object mats = R.Get(sr, "sharedMaterials");
+                if (hasRule && rule.SwitchMaterials && rule.AarMaterial != null)
+                    mats = U.MaterialArray(rule.AarMaterial, Math.Max(1, U.ArrayLen(mats)));
+
+                R.Set(dr, "sharedMaterials", mats);
+                R.Set(dr, "enabled", true);
+                state.RendererMap[sr] = dr;
+                state.ClonedRendererCount++;
+            }
+        }
+
+        private object CloneRenderer(object sr, object dstTransform, Dictionary<object, object> tmap)
+        {
+            object dgo = R.Get(dstTransform, "gameObject");
+            Type actual = sr.GetType();
+
+            if (U.SkinType != null && U.SkinType.IsAssignableFrom(actual))
+            {
+                object dr = U.AddComponent(dgo, U.SkinType);
+                R.Set(dr, "sharedMesh", R.Get(sr, "sharedMesh"));
+                R.Set(dr, "localBounds", R.Get(sr, "localBounds"));
+
+                Array sb = R.Get(sr, "bones") as Array;
+                if (sb != null)
+                {
+                    Type trType = R.Find("UnityEngine.Transform");
+                    Array db = Array.CreateInstance(trType, sb.Length);
+                    for (int i = 0; i < sb.Length; i++)
+                    {
+                        object mapped;
+                        if (tmap.TryGetValue(sb.GetValue(i), out mapped)) db.SetValue(mapped, i);
+                    }
+                    R.Set(dr, "bones", db);
+                }
+
+                object sroot = R.Get(sr, "rootBone");
+                object droot;
+                if (sroot != null && tmap.TryGetValue(sroot, out droot)) R.Set(dr, "rootBone", droot);
+                R.Set(dr, "updateWhenOffscreen", true);
+                return dr;
+            }
+
+            if (U.MeshRendererType != null && U.MeshRendererType.IsAssignableFrom(actual))
+            {
+                object smf = U.GetComponent(R.Get(R.Get(sr, "transform"), "gameObject"), U.MeshFilterType);
+                if (smf != null)
+                {
+                    object dmf = U.AddComponent(dgo, U.MeshFilterType);
+                    R.Set(dmf, "sharedMesh", R.Get(smf, "sharedMesh"));
+                }
+                return U.AddComponent(dgo, U.MeshRendererType);
+            }
+
+            return null;
+        }
+
+        private void ApplyRecordedCrewState(object unit, object pose, Dictionary<object, object> rendererMap)
+        {
+            if (unit == null || pose == null) return;
+            Array states = R.Get(pose, "CrewPresentStatuses") as Array;
+            if (states == null) return;
+
+            object crew = R.Get(unit, "CrewManager");
+            if (crew == null) crew = R.Call(unit, "get_CrewManager");
+            if (crew == null) return;
+
+            for (int i = 0; i < states.Length; i++)
+            {
+                object s = states.GetValue(i);
+                if (s == null || R.Bool(s, "present", true)) continue;
+
+                object pos = R.Get(s, "position");
+                object member = pos == null ? null : R.Call(crew, "GetCrewMember", pos);
+                if (member == null) continue;
+
+                List<object> visuals = R.List(R.Get(member, "AllAarVisuals"));
+                for (int v = 0; v < visuals.Count; v++)
+                {
+                    List<object> rs = NativeCaptureState.VisualRenderers(visuals[v]);
+                    for (int j = 0; j < rs.Count; j++)
+                    {
+                        object clone;
+                        if (rendererMap.TryGetValue(rs[j], out clone)) R.Set(clone, "enabled", false);
+                    }
+                }
+            }
+        }
+
+        private void FitCameras(object visualRoot)
+        {
+            List<object> rs = U.Components(visualRoot, U.RendererType, true);
+            object rootTr = R.Get(_root, "transform");
+            object center = R.Get(rootTr, "position");
+            float radius = 3f;
+
+            List<float> xs = new List<float>(), ys = new List<float>(), zs = new List<float>();
+            List<object> centers = new List<object>();
+            List<float> extents = new List<float>();
+
+            for (int i = 0; i < rs.Count; i++)
+            {
+                if (!R.Bool(rs[i], "enabled", true)) continue;
+                object b = R.Get(rs[i], "bounds");
+                object c = b == null ? null : R.Get(b, "center");
+                object e = b == null ? null : R.Get(b, "extents");
+                if (c == null || e == null) continue;
+
+                float er = U.Mag(e);
+                object local = R.Call(rootTr, "InverseTransformPoint", c);
+                if (local == null) continue;
+                float dist = U.Mag(local);
+                if (er < .01f || er > 14f || dist > 18f) continue;
+
+                xs.Add(U.X(local)); ys.Add(U.Y(local)); zs.Add(U.Z(local));
+                centers.Add(c); extents.Add(er);
+            }
+
+            if (xs.Count > 0)
+            {
+                xs.Sort(); ys.Sort(); zs.Sort();
+                int m = xs.Count / 2;
+                float mx = xs[m], my = ys[m], mz = zs[m];
+                center = R.Call(rootTr, "TransformPoint", U.V(mx, my, mz));
+
+                float reach = 1.8f;
+                for (int i = 0; i < centers.Count; i++)
+                {
+                    object lc = R.Call(rootTr, "InverseTransformPoint", centers[i]);
+                    float dx = U.X(lc)-mx, dy = U.Y(lc)-my, dz = U.Z(lc)-mz;
+                    float d = (float)Math.Sqrt(dx*dx + dy*dy + dz*dz) + extents[i];
+                    if (d > reach) reach = d;
+                }
+                radius = Math.Max(1.8f, Math.Min(7.2f, reach * 1.04f));
+            }
+
+            _radius = radius;
+            float ortho = Math.Max(1.15f, Math.Min(5.2f, radius * .58f));
+            object camPos = U.Add(center, U.V(radius * 1.12f, radius * .28f, -radius * 1.62f));
+
+            _baseCam = U.Camera("GHPC_NativeLiveAAR_BaseCamera");
+            object baseGo = R.Get(_baseCam, "gameObject");
+            _created.Add(baseGo);
+            object bt = R.Get(baseGo, "transform");
+            R.Set(bt, "position", camPos);
+            R.Call(bt, "LookAt", center);
+            ConfigureCamera(_baseCam, ortho, U.Mask(_aarLayer), 50f, false);
+
+            _xrayCam = U.Camera("GHPC_NativeLiveAAR_XrayCamera");
+            object xgo = R.Get(_xrayCam, "gameObject");
+            _created.Add(xgo);
+            object xt = R.Get(xgo, "transform");
+            R.Set(xt, "position", camPos);
+            R.Set(xt, "rotation", R.Get(bt, "rotation"));
+            ConfigureCamera(_xrayCam, ortho, U.Mask(_xrayLayer), 51f, true);
+
+            int both = U.Mask(_aarLayer) | U.Mask(_xrayLayer);
+            object l1 = U.PointLight("GHPC_NativeLiveAAR_L1", U.Add(center, U.V(radius, radius, -radius)), radius*5f, 3f, both);
+            object l2 = U.PointLight("GHPC_NativeLiveAAR_L2", U.Add(center, U.V(-radius, radius*.35f, radius)), radius*4f, 1.5f, both);
+            if (l1 != null) _created.Add(l1);
+            if (l2 != null) _created.Add(l2);
+        }
+
+        private void ConfigureCamera(object cam, float ortho, int mask, float depth, bool overlay)
+        {
+            R.Set(cam, "nearClipPlane", .03f);
+            R.Set(cam, "farClipPlane", 80f);
+            R.Set(cam, "orthographic", true);
+            R.Set(cam, "orthographicSize", ortho);
+            R.Set(cam, "cullingMask", mask);
+            R.Set(cam, "depth", depth);
+            R.Set(cam, "enabled", true);
+            if (overlay) U.DepthOnly(cam); else U.SolidBlack(cam);
+
+            float sw = U.ScreenW(), sh = U.ScreenH();
+            float w = Math.Max(360f, Math.Min(sw * .30f, 620f));
+            float h = w * 9f / 16f;
+            float px = sw - w - 20f;
+            float py = 38f;
+            float nx = px / sw;
+            float ny = 1f - ((py + h) / sh);
+            R.Set(cam, "rect", U.Rect(nx, ny, w/sw, h/sh));
+        }
+
+        private void CreateShotLines(object rootShot, object sourceRoot, object stageTransform)
+        {
+            List<object> family = new List<object>();
+            family.Add(rootShot);
+
+            try
+            {
+                Type at = R.Find("GHPC.AarController");
+                object ac = R.GetStatic(at, "Instance");
+                List<object> shots = R.List(R.Get(ac, "SessionShots"));
+                for (int i = 0; i < shots.Count; i++)
+                {
+                    object s = shots[i];
+                    if (s == null || object.ReferenceEquals(s, rootShot)) continue;
+                    object p = R.Get(s, "ParentShot");
+                    int guard = 0;
+                    while (p != null && guard++ < 20)
+                    {
+                        if (object.ReferenceEquals(p, rootShot)) { family.Add(s); break; }
+                        p = R.Get(p, "ParentShot");
+                    }
+                }
+            }
+            catch { }
+
+            for (int i = 0; i < family.Count; i++)
+            {
+                object shot = family[i];
+                bool child = !object.ReferenceEquals(shot, rootShot);
+                List<object> frames = R.List(R.Get(shot, "AllShotFrames"));
+                List<object> pts = new List<object>();
+
+                bool jet = false;
+                for (int j = 0; j < frames.Count; j++)
+                {
+                    object wp = R.Get(frames[j], "WorldPosition");
+                    if (wp != null) pts.Add(MapPoint(sourceRoot, stageTransform, wp));
+                    if (R.Bool(frames[j], "IsJet", false)) jet = true;
+                }
+
+                object stop = R.Get(shot, "StopPosition");
+                if (stop != null) pts.Add(MapPoint(sourceRoot, stageTransform, stop));
+                if (pts.Count < 2) continue;
+
+                float r = child ? 1f : .95f;
+                float g = child ? .10f : .72f;
+                float b = child ? .05f : .05f;
+                if (jet) { r = .08f; g = .92f; b = 1f; }
+
+                object line = U.Line("NativeAarTrace", pts, Math.Max(.012f, _radius*.008f), r, g, b, 1f, _xrayLayer);
+                if (line != null) _created.Add(line);
+            }
+        }
+
+        private object MapPoint(object sourceRoot, object stageTransform, object world)
+        {
+            object local = R.Call(sourceRoot, "InverseTransformPoint", world);
+            return R.Call(stageTransform, "TransformPoint", local);
+        }
+    }
+
+    internal sealed class AarRule
+    {
+        internal object AarMaterial;
+        internal int Mode;
+        internal bool SwitchMaterials;
+    }
+
+    internal sealed class HighlightState
+    {
+        internal object Visual;
+        internal bool Previous;
+    }
+
+    internal sealed class NativeCaptureState
+    {
+        internal readonly Dictionary<object, AarRule> AarVisualRules = new Dictionary<object, AarRule>(RefEq.Instance);
+        internal readonly HashSet<object> AarModelRenderers = new HashSet<object>(RefEq.Instance);
+        internal readonly Dictionary<object, object> RendererMap = new Dictionary<object, object>(RefEq.Instance);
+        internal readonly List<HighlightState> Highlights = new List<HighlightState>();
+
+        internal int AarVisualCount;
+        internal int AarModelCount;
+        internal int ClonedRendererCount;
+
+        private Type _aarControllerType;
+        private object _aarController;
+        private bool _hadShowXray;
+        private bool _oldShowXray;
+        private bool _hadShowAll;
+        private bool _oldShowAll;
+
+        internal void Begin(object shot, object targetGo)
+        {
+            _aarControllerType = R.Find("GHPC.AarController");
+            _aarController = R.GetStatic(_aarControllerType, "Instance");
+
+            _hadShowXray = TryGetControllerBool("ShowXray", out _oldShowXray);
+            _hadShowAll = TryGetControllerBool("ShowingAllAarModels", out _oldShowAll);
+
+            SetControllerBool("ShowingAllAarModels", true);
+            SetControllerBool("ShowXray", true);
+
+            BuildAarVisualRules(shot, targetGo);
+            BuildAarModelRendererSet(targetGo);
+        }
+
+        internal void Restore()
+        {
+            for (int i = Highlights.Count - 1; i >= 0; i--)
+            {
+                try
+                {
+                    R.Set(Highlights[i].Visual, "Highlighted", Highlights[i].Previous);
+                    R.Call(Highlights[i].Visual, "FixHighlights");
+                }
+                catch { }
+            }
+
+            if (_hadShowXray) SetControllerBool("ShowXray", _oldShowXray);
+            if (_hadShowAll) SetControllerBool("ShowingAllAarModels", _oldShowAll);
+        }
+
+        private bool TryGetControllerBool(string name, out bool value)
+        {
+            value = false;
+            object v = _aarController == null ? null : R.Get(_aarController, name);
+            if (v == null) v = R.GetStatic(_aarControllerType, name);
+            if (v == null) return false;
+            try { value = Convert.ToBoolean(v); return true; } catch { return false; }
+        }
+
+        private void SetControllerBool(string name, bool value)
+        {
+            bool ok = false;
+            if (_aarController != null) ok = R.Set(_aarController, name, value);
+            if (!ok) R.SetStatic(_aarControllerType, name, value);
+        }
+
+        private void BuildAarVisualRules(object shot, object targetGo)
+        {
+            Type avType = R.Find("GHPC.AarVisual");
+            if (avType == null) return;
+
+            HashSet<object> hit = HitRenderers(shot);
+            List<object> visuals = U.Components(targetGo, avType, true);
+            AarVisualCount = visuals.Count;
+
+            for (int i = 0; i < visuals.Count; i++)
+            {
+                object av = visuals[i];
+                List<object> rs = VisualRenderers(av);
+                if (rs.Count == 0) continue;
+
+                bool isHit = false;
+                for (int j = 0; j < rs.Count; j++)
+                    if (hit.Contains(rs[j])) { isHit = true; break; }
+
+                if (isHit)
+                {
+                    bool old = R.Bool(av, "Highlighted", false);
+                    Highlights.Add(new HighlightState { Visual = av, Previous = old });
+                    R.Set(av, "Highlighted", true);
+                    R.Call(av, "FixHighlights");
+                }
+
+                object mat = R.Get(av, "AarMaterial");
+                bool swap = R.Bool(av, "SwitchMaterials", true);
+                int mode = 2;
+                object mv = R.Get(av, "RenderMode");
+                if (mv == null) mv = R.Get(av, "_renderMode");
+                if (mv != null) { try { mode = Convert.ToInt32(mv); } catch { } }
+
+                AarRule rule = new AarRule { AarMaterial = mat, SwitchMaterials = swap, Mode = mode };
+                for (int j = 0; j < rs.Count; j++)
+                    if (rs[j] != null) AarVisualRules[rs[j]] = rule;
+            }
+        }
+
+        internal static List<object> VisualRenderers(object av)
+        {
+            List<object> rs = R.List(R.Get(av, "_renderers"));
+            if (rs.Count == 0) rs = R.List(R.Get(av, "SpecificRenderers"));
+            if (rs.Count == 0)
+            {
+                object go = R.Get(av, "gameObject");
+                if (go != null) rs = U.Components(go, U.RendererType, true);
+            }
+            return rs;
+        }
+
+        private HashSet<object> HitRenderers(object shot)
+        {
+            HashSet<object> hit = new HashSet<object>(RefEq.Instance);
+            List<object> frames = R.List(R.Get(shot, "AllShotFrames"));
+            for (int i = 0; i < frames.Count; i++)
+            {
+                object hm = R.Get(frames[i], "HitModel");
+                if (hm == null) continue;
+                List<object> rs = R.List(R.Get(hm, "_renderers"));
+                if (rs.Count == 0)
+                {
+                    object go = R.Get(hm, "gameObject");
+                    if (go != null) rs = U.Components(go, U.RendererType, true);
+                }
+                for (int j = 0; j < rs.Count; j++) if (rs[j] != null) hit.Add(rs[j]);
+            }
+            return hit;
+        }
+
+        private void BuildAarModelRendererSet(object targetGo)
+        {
+            Type modelType = R.Find("AarModel");
+            if (modelType != null)
+            {
+                List<object> models = U.Components(targetGo, modelType, true);
+                AarModelCount += models.Count;
+                for (int i = 0; i < models.Count; i++) AddModelRenderers(models[i]);
+            }
+
+            // Ammo racks can expose native AAR ammo/charge models without those models
+            // being obvious in the ordinary renderer hierarchy.
+            Type rackType = R.Find("GHPC.Weapons.AmmoRack");
+            if (rackType == null) rackType = R.Find("AmmoRack");
+            if (rackType != null)
+            {
+                List<object> racks = U.Components(targetGo, rackType, true);
+                for (int i = 0; i < racks.Count; i++)
+                {
+                    object m = R.Call(racks[i], "GetAarModel");
+                    if (m != null) AddModelRenderers(m);
+                    object c = R.Call(racks[i], "GetChargeAarModel");
+                    if (c != null) AddModelRenderers(c);
+                }
+            }
+        }
+
+        private void AddModelRenderers(object model)
+        {
+            if (model == null) return;
+            object go = R.Get(model, "gameObject");
+            if (go == null)
+            {
+                object tr = R.Get(model, "transform");
+                go = tr == null ? null : R.Get(tr, "gameObject");
+            }
+            if (go == null) return;
+
+            List<object> rs = U.Components(go, U.RendererType, true);
+            for (int i = 0; i < rs.Count; i++)
+                if (rs[i] != null) AarModelRenderers.Add(rs[i]);
+        }
+    }
+}
