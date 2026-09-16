@@ -547,18 +547,18 @@ namespace GHPCNativeLiveAAR
             {
                 if (!R.Bool(rs[i], "enabled", true)) continue;
                 object b = R.Get(rs[i], "bounds");
-                object c = b == null ? null : R.Get(b, "center");
+                object cc = b == null ? null : R.Get(b, "center");
                 object e = b == null ? null : R.Get(b, "extents");
-                if (c == null || e == null) continue;
+                if (cc == null || e == null) continue;
 
                 float er = U.Mag(e);
-                object local = R.Call(rootTr, "InverseTransformPoint", c);
+                object local = R.Call(rootTr, "InverseTransformPoint", cc);
                 if (local == null) continue;
                 float dist = U.Mag(local);
                 if (er < .01f || er > 14f || dist > 18f) continue;
 
                 xs.Add(U.X(local)); ys.Add(U.Y(local)); zs.Add(U.Z(local));
-                centers.Add(c); extents.Add(er);
+                centers.Add(cc); extents.Add(er);
             }
 
             if (xs.Count > 0)
@@ -573,15 +573,16 @@ namespace GHPCNativeLiveAAR
                 {
                     object lc = R.Call(rootTr, "InverseTransformPoint", centers[i]);
                     float dx = U.X(lc)-mx, dy = U.Y(lc)-my, dz = U.Z(lc)-mz;
-                    float d = (float)Math.Sqrt(dx*dx + dy*dy + dz*dz) + extents[i];
-                    if (d > reach) reach = d;
+                    float dd = (float)Math.Sqrt(dx*dx + dy*dy + dz*dz) + extents[i];
+                    if (dd > reach) reach = dd;
                 }
-                radius = Math.Max(1.8f, Math.Min(7.2f, reach * 1.04f));
+                radius = Math.Max(1.8f, Math.Min(7.2f, reach * 1.03f));
             }
 
             _radius = radius;
-            float ortho = Math.Max(1.15f, Math.Min(5.2f, radius * .58f));
-            object camPos = U.Add(center, U.V(radius * 1.12f, radius * .28f, -radius * 1.62f));
+            _center = center;
+
+            object camPos = U.Add(center, U.V(radius * 2.15f, radius * .58f, -radius * 3.15f));
 
             _baseCam = U.Camera("GHPC_NativeLiveAAR_BaseCamera");
             object baseGo = R.Get(_baseCam, "gameObject");
@@ -589,7 +590,7 @@ namespace GHPCNativeLiveAAR
             object bt = R.Get(baseGo, "transform");
             R.Set(bt, "position", camPos);
             R.Call(bt, "LookAt", center);
-            ConfigureCamera(_baseCam, ortho, U.Mask(_aarLayer), 50f, false);
+            ConfigureCamera(_baseCam, U.Mask(_aarLayer), 50f, false);
 
             _xrayCam = U.Camera("GHPC_NativeLiveAAR_XrayCamera");
             object xgo = R.Get(_xrayCam, "gameObject");
@@ -597,34 +598,37 @@ namespace GHPCNativeLiveAAR
             object xt = R.Get(xgo, "transform");
             R.Set(xt, "position", camPos);
             R.Set(xt, "rotation", R.Get(bt, "rotation"));
-            ConfigureCamera(_xrayCam, ortho, U.Mask(_xrayLayer), 51f, true);
+            ConfigureCamera(_xrayCam, U.Mask(_xrayLayer), 51f, true);
 
             int both = U.Mask(_aarLayer) | U.Mask(_xrayLayer);
-            object l1 = U.PointLight("GHPC_NativeLiveAAR_L1", U.Add(center, U.V(radius, radius, -radius)), radius*5f, 3f, both);
-            object l2 = U.PointLight("GHPC_NativeLiveAAR_L2", U.Add(center, U.V(-radius, radius*.35f, radius)), radius*4f, 1.5f, both);
+            object l1 = U.PointLight("GHPC_NativeLiveAAR_L1", U.Add(center, U.V(radius, radius, -radius)), radius*5f, 2.8f, both);
+            object l2 = U.PointLight("GHPC_NativeLiveAAR_L2", U.Add(center, U.V(-radius, radius*.40f, radius)), radius*4f, 1.25f, both);
             if (l1 != null) _created.Add(l1);
             if (l2 != null) _created.Add(l2);
         }
 
-        private void ConfigureCamera(object cam, float ortho, int mask, float depth, bool overlay)
+        private void ConfigureCamera(object cam, int mask, float depth, bool overlay)
         {
             R.Set(cam, "nearClipPlane", .03f);
-            R.Set(cam, "farClipPlane", 80f);
-            R.Set(cam, "orthographic", true);
-            R.Set(cam, "orthographicSize", ortho);
+            R.Set(cam, "farClipPlane", 100f);
+            R.Set(cam, "orthographic", false);
+            R.Set(cam, "fieldOfView", 30f);
             R.Set(cam, "cullingMask", mask);
             R.Set(cam, "depth", depth);
             R.Set(cam, "enabled", true);
+            R.Set(cam, "allowHDR", false);
+            R.Set(cam, "allowMSAA", true);
             if (overlay) U.DepthOnly(cam); else U.SolidBlack(cam);
 
             float sw = U.ScreenW(), sh = U.ScreenH();
-            float w = Math.Max(360f, Math.Min(sw * .30f, 620f));
+            float w = Math.Max(380f, Math.Min(sw * .30f, 620f));
             float h = w * 9f / 16f;
-            float px = sw - w - 20f;
-            float py = 38f;
+            float px = sw - w - 18f;
+            float py = 74f;
             float nx = px / sw;
             float ny = 1f - ((py + h) / sh);
             R.Set(cam, "rect", U.Rect(nx, ny, w/sw, h/sh));
+            R.Set(cam, "aspect", 16f/9f);
         }
 
         private void CreateShotLines(object rootShot, object sourceRoot, object stageTransform)
