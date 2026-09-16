@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using MelonLoader;
 
-[assembly: MelonInfo(typeof(GHPCNativeLiveAAR.Mod), "GHPC Native Live AAR", "1.0.0-scratch", "Toxic_Cxnt")]
+[assembly: MelonInfo(typeof(GHPCNativeLiveAAR.Mod), "GHPC Native Live AAR", "1.0.3-scratch", "Toxic_Cxnt")]
 [assembly: MelonGame("Radian Simulations LLC", "GHPC")]
 
 namespace GHPCNativeLiveAAR
