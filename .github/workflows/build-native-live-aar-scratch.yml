@@ -1,0 +1,68 @@
+name: Build GHPC Native Live AAR Scratch
+
+on:
+  push:
+    branches:
+      - live-aar-scratch-v1
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Safety check
+        shell: powershell
+        run: |
+          $src = (Get-Content live-aar-scratch\ScratchEntry.cs -Raw) + (Get-Content live-aar-scratch\ScratchReflection.cs -Raw) + (Get-Content live-aar-scratch\ScratchStage.cs -Raw)
+          $forbidden = @(
+            'StartAar(',
+            'DisplayAarShot(',
+            'Time.timeScale',
+            'Physics.autoSimulation',
+            'Camera.main',
+            'Cursor.lockState',
+            'Camera_Rework.'
+          )
+          foreach ($term in $forbidden) {
+            if ($src.Contains($term)) { throw "Forbidden live-game takeover API found: $term" }
+          }
+
+      - name: Download MelonLoader 0.6.1
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri 'https://github.com/LavaGang/MelonLoader/releases/download/v0.6.1/MelonLoader.x64.zip' -OutFile ml.zip
+          Expand-Archive ml.zip -DestinationPath ml -Force
+          $melon = Get-ChildItem ml -Recurse -Filter MelonLoader.dll | Where-Object { $_.FullName -match '[\\/]net35[\\/]' } | Select-Object -First 1
+          if (-not $melon) { $melon = Get-ChildItem ml -Recurse -Filter MelonLoader.dll | Select-Object -First 1 }
+          if (-not $melon) { throw 'MelonLoader.dll not found.' }
+          $melon.FullName | Set-Content melon-path.txt
+
+      - name: Compile scratch rewrite
+        shell: powershell
+        run: |
+          $melon = (Get-Content melon-path.txt -Raw).Trim()
+          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (-not (Test-Path $csc)) { $csc = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe" }
+          if (-not (Test-Path $csc)) { throw 'csc.exe not found.' }
+
+          New-Item -ItemType Directory -Force dist | Out-Null
+          & $csc /nologo /target:library /optimize+ /platform:anycpu /out:dist\GHPC_LiveAAR.dll /reference:"$melon" live-aar-scratch\ScratchEntry.cs live-aar-scratch\ScratchReflection.cs live-aar-scratch\ScratchStage.cs
+          if ($LASTEXITCODE -ne 0) { throw "Compiler failed: $LASTEXITCODE" }
+
+          $hash = (Get-FileHash dist\GHPC_LiveAAR.dll -Algorithm SHA256).Hash
+          $size = (Get-Item dist\GHPC_LiveAAR.dll).Length
+          "Version=1.0.0-scratch" | Set-Content dist\BUILD_INFO.txt
+          "Architecture=Native GHPC AarVisual + AarModel snapshot; no generic live-vehicle renderer fallback" | Add-Content dist\BUILD_INFO.txt
+          "MelonLoaderCompileTarget=0.6.1 net35" | Add-Content dist\BUILD_INFO.txt
+          "SHA256=$hash" | Add-Content dist\BUILD_INFO.txt
+          "Size=$size" | Add-Content dist\BUILD_INFO.txt
+          Copy-Item live-aar-scratch\*.cs dist\
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: GHPC_NativeLiveAAR_Scratch_v1.0.0
+          path: dist/**
+          if-no-files-found: error
