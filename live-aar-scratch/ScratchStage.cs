@@ -773,85 +773,44 @@ namespace GHPCNativeLiveAAR
         internal object AarMaterial;
         internal int Mode;
         internal bool SwitchMaterials;
-    }
-
-    internal sealed class HighlightState
-    {
-        internal object Visual;
-        internal bool Previous;
+        internal bool Highlighted;
+        internal bool Hidden;
     }
 
     internal sealed class NativeCaptureState
     {
         internal readonly Dictionary<object, AarRule> AarVisualRules = new Dictionary<object, AarRule>(RefEq.Instance);
         internal readonly HashSet<object> AarModelRenderers = new HashSet<object>(RefEq.Instance);
+        internal readonly HashSet<object> DirectHitModelRenderers = new HashSet<object>(RefEq.Instance);
         internal readonly Dictionary<object, object> RendererMap = new Dictionary<object, object>(RefEq.Instance);
-        internal readonly List<HighlightState> Highlights = new List<HighlightState>();
 
         internal int AarVisualCount;
         internal int AarModelCount;
+        internal int DirectHitModelCount;
         internal int ClonedRendererCount;
+        internal int ShellRendererCount;
 
-        private Type _aarControllerType;
-        private object _aarController;
-        private bool _hadShowXray;
-        private bool _oldShowXray;
-        private bool _hadShowAll;
-        private bool _oldShowAll;
+        private readonly HashSet<object> _seenModels = new HashSet<object>(RefEq.Instance);
 
-        internal void Begin(object shot, object targetGo)
+        internal void Begin(object shot, object aarRootGo, object vehicleRootGo)
         {
-            _aarControllerType = R.Find("GHPC.AarController");
-            _aarController = R.GetStatic(_aarControllerType, "Instance");
-
-            _hadShowXray = TryGetControllerBool("ShowXray", out _oldShowXray);
-            _hadShowAll = TryGetControllerBool("ShowingAllAarModels", out _oldShowAll);
-
-            SetControllerBool("ShowingAllAarModels", true);
-            SetControllerBool("ShowXray", true);
-
-            BuildAarVisualRules(shot, targetGo);
-            BuildAarModelRendererSet(targetGo);
+            BuildAarVisualRules(aarRootGo);
+            BuildAmmoAarModels(vehicleRootGo);
+            if (!object.ReferenceEquals(aarRootGo, vehicleRootGo))
+                BuildAmmoAarModels(aarRootGo);
+            BuildDirectHitModels(shot);
         }
 
         internal void Restore()
         {
-            for (int i = Highlights.Count - 1; i >= 0; i--)
-            {
-                try
-                {
-                    R.Set(Highlights[i].Visual, "Highlighted", Highlights[i].Previous);
-                    R.Call(Highlights[i].Visual, "FixHighlights");
-                }
-                catch { }
-            }
-
-            if (_hadShowXray) SetControllerBool("ShowXray", _oldShowXray);
-            if (_hadShowAll) SetControllerBool("ShowingAllAarModels", _oldShowAll);
         }
 
-        private bool TryGetControllerBool(string name, out bool value)
-        {
-            value = false;
-            object v = _aarController == null ? null : R.Get(_aarController, name);
-            if (v == null) v = R.GetStatic(_aarControllerType, name);
-            if (v == null) return false;
-            try { value = Convert.ToBoolean(v); return true; } catch { return false; }
-        }
-
-        private void SetControllerBool(string name, bool value)
-        {
-            bool ok = false;
-            if (_aarController != null) ok = R.Set(_aarController, name, value);
-            if (!ok) R.SetStatic(_aarControllerType, name, value);
-        }
-
-        private void BuildAarVisualRules(object shot, object targetGo)
+        private void BuildAarVisualRules(object targetGo)
         {
             Type avType = R.Find("GHPC.AarVisual");
+            if (avType == null) avType = R.Find("AarVisual");
             if (avType == null) return;
 
-            HashSet<object> hit = HitRenderers(shot);
             List<object> visuals = U.Components(targetGo, avType, true);
             AarVisualCount = visuals.Count;
 
@@ -861,26 +820,24 @@ namespace GHPCNativeLiveAAR
                 List<object> rs = VisualRenderers(av);
                 if (rs.Count == 0) continue;
 
-                bool isHit = false;
-                for (int j = 0; j < rs.Count; j++)
-                    if (hit.Contains(rs[j])) { isHit = true; break; }
-
-                if (isHit)
-                {
-                    bool old = R.Bool(av, "Highlighted", false);
-                    Highlights.Add(new HighlightState { Visual = av, Previous = old });
-                    R.Set(av, "Highlighted", true);
-                    R.Call(av, "FixHighlights");
-                }
-
                 object mat = R.Get(av, "AarMaterial");
                 bool swap = R.Bool(av, "SwitchMaterials", true);
+                bool hidden = R.Bool(av, "Hidden", false);
+
                 int mode = 2;
                 object mv = R.Get(av, "RenderMode");
                 if (mv == null) mv = R.Get(av, "_renderMode");
                 if (mv != null) { try { mode = Convert.ToInt32(mv); } catch { } }
 
-                AarRule rule = new AarRule { AarMaterial = mat, SwitchMaterials = swap, Mode = mode };
+                AarRule rule = new AarRule
+                {
+                    AarMaterial = mat,
+                    SwitchMaterials = swap,
+                    Mode = mode,
+                    Highlighted = true,
+                    Hidden = hidden
+                };
+
                 for (int j = 0; j < rs.Count; j++)
                     if (rs[j] != null) AarVisualRules[rs[j]] = rule;
             }
@@ -898,55 +855,83 @@ namespace GHPCNativeLiveAAR
             return rs;
         }
 
-        private HashSet<object> HitRenderers(object shot)
+        private void BuildAmmoAarModels(object rootGo)
         {
-            HashSet<object> hit = new HashSet<object>(RefEq.Instance);
-            List<object> frames = R.List(R.Get(shot, "AllShotFrames"));
-            for (int i = 0; i < frames.Count; i++)
-            {
-                object hm = R.Get(frames[i], "HitModel");
-                if (hm == null) continue;
-                List<object> rs = R.List(R.Get(hm, "_renderers"));
-                if (rs.Count == 0)
-                {
-                    object go = R.Get(hm, "gameObject");
-                    if (go != null) rs = U.Components(go, U.RendererType, true);
-                }
-                for (int j = 0; j < rs.Count; j++) if (rs[j] != null) hit.Add(rs[j]);
-            }
-            return hit;
-        }
+            if (rootGo == null) return;
 
-        private void BuildAarModelRendererSet(object targetGo)
-        {
-            Type modelType = R.Find("AarModel");
-            if (modelType != null)
-            {
-                List<object> models = U.Components(targetGo, modelType, true);
-                AarModelCount += models.Count;
-                for (int i = 0; i < models.Count; i++) AddModelRenderers(models[i]);
-            }
-
-            // Ammo racks can expose native AAR ammo/charge models without those models
-            // being obvious in the ordinary renderer hierarchy.
             Type rackType = R.Find("GHPC.Weapons.AmmoRack");
             if (rackType == null) rackType = R.Find("AmmoRack");
-            if (rackType != null)
+            if (rackType == null) return;
+
+            List<object> racks = U.Components(rootGo, rackType, true);
+            for (int i = 0; i < racks.Count; i++)
             {
-                List<object> racks = U.Components(targetGo, rackType, true);
-                for (int i = 0; i < racks.Count; i++)
-                {
-                    object m = R.Call(racks[i], "GetAarModel");
-                    if (m != null) AddModelRenderers(m);
-                    object c = R.Call(racks[i], "GetChargeAarModel");
-                    if (c != null) AddModelRenderers(c);
-                }
+                object m = R.Call(racks[i], "GetAarModel");
+                AddModelRenderers(m, false);
+                object charge = R.Call(racks[i], "GetChargeAarModel");
+                AddModelRenderers(charge, false);
             }
         }
 
-        private void AddModelRenderers(object model)
+        private void BuildDirectHitModels(object rootShot)
+        {
+            List<object> family = CollectShotFamily(rootShot);
+            HashSet<object> models = new HashSet<object>(RefEq.Instance);
+
+            for (int s = 0; s < family.Count; s++)
+            {
+                List<object> frames = R.List(R.Get(family[s], "AllShotFrames"));
+                for (int i = 0; i < frames.Count; i++)
+                {
+                    object hm = R.Get(frames[i], "HitModel");
+                    if (hm == null || models.Contains(hm)) continue;
+                    models.Add(hm);
+                    AddModelRenderers(hm, true);
+                }
+            }
+
+            DirectHitModelCount = models.Count;
+        }
+
+        private List<object> CollectShotFamily(object rootShot)
+        {
+            List<object> family = new List<object>();
+            family.Add(rootShot);
+            try
+            {
+                Type at = R.Find("GHPC.AarController");
+                object ac = R.GetStatic(at, "Instance");
+                List<object> shots = R.List(R.Get(ac, "SessionShots"));
+                for (int i = 0; i < shots.Count; i++)
+                {
+                    object s = shots[i];
+                    if (s == null || object.ReferenceEquals(s, rootShot)) continue;
+                    object p = R.Get(s, "ParentShot");
+                    int guard = 0;
+                    while (p != null && guard++ < 20)
+                    {
+                        if (object.ReferenceEquals(p, rootShot))
+                        {
+                            family.Add(s);
+                            break;
+                        }
+                        p = R.Get(p, "ParentShot");
+                    }
+                }
+            }
+            catch { }
+            return family;
+        }
+
+        private void AddModelRenderers(object model, bool directHit)
         {
             if (model == null) return;
+            if (!_seenModels.Contains(model))
+            {
+                _seenModels.Add(model);
+                AarModelCount++;
+            }
+
             object go = R.Get(model, "gameObject");
             if (go == null)
             {
@@ -955,9 +940,17 @@ namespace GHPCNativeLiveAAR
             }
             if (go == null) return;
 
-            List<object> rs = U.Components(go, U.RendererType, true);
+            List<object> rs = R.List(R.Get(model, "_renderers"));
+            if (rs.Count == 0) rs = U.Components(go, U.RendererType, true);
+
             for (int i = 0; i < rs.Count; i++)
-                if (rs[i] != null) AarModelRenderers.Add(rs[i]);
+            {
+                object rr = rs[i];
+                if (rr == null) continue;
+                AarModelRenderers.Add(rr);
+                if (directHit) DirectHitModelRenderers.Add(rr);
+            }
         }
     }
+
 }
