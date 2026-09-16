@@ -16,7 +16,7 @@ jobs:
         shell: powershell
         run: |
           $chunks = @()
-          for ($i = 0; $i -le 4; $i++) {
+          for ($i = 0; $i -le 6; $i++) {
             $path = ('live-xray-build\payload_{0:D2}.txt' -f $i)
             if (-not (Test-Path $path)) { throw "Missing payload chunk: $path" }
             $chunks += (Get-Content $path -Raw).Trim()
