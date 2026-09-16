@@ -136,7 +136,6 @@ jobs:
                 cloned++;
             }
 
-            LiveXrayAar.DebugStage("renderer clone: total=" + renderers.Count + ", cloned=" + cloned + ", aar=" + aarControlled + ", fallback=" + fallback);
             if (cloned == 0) throw new InvalidOperationException("No target renderers could be cloned");
         }
 '@
