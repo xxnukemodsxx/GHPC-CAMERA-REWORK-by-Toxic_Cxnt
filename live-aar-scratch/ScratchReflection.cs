@@ -269,6 +269,22 @@ namespace GHPCNativeLiveAAR
         internal static float Z(object v) { return R.Float(v, "z", 0); }
         internal static float Mag(object v) { float x = X(v), y = Y(v), z = Z(v); return (float)Math.Sqrt(x*x + y*y + z*z); }
         internal static object Add(object a, object b) { return V(X(a)+X(b), Y(a)+Y(b), Z(a)+Z(b)); }
+        internal static object Sub(object a, object b) { return V(X(a)-X(b), Y(a)-Y(b), Z(a)-Z(b)); }
+        internal static object Mul(object a, float k) { return V(X(a)*k, Y(a)*k, Z(a)*k); }
+        internal static object DivScale(object a, object b)
+        {
+            float bx = Math.Abs(X(b)) < .0001f ? 1f : X(b);
+            float by = Math.Abs(Y(b)) < .0001f ? 1f : Y(b);
+            float bz = Math.Abs(Z(b)) < .0001f ? 1f : Z(b);
+            return V(X(a)/bx, Y(a)/by, Z(a)/bz);
+        }
+        internal static object RelativeRotation(object rootWorldRotation, object childWorldRotation)
+        {
+            Init();
+            object inv = R.CallStatic(_quat, "Inverse", rootWorldRotation);
+            object rel = inv == null ? null : R.CallStatic(_quat, "op_Multiply", inv, childWorldRotation);
+            return rel ?? childWorldRotation;
+        }
         internal static int Mask(int layer) { return layer >= 0 && layer < 32 ? 1 << layer : 0; }
 
         internal static void Destroy(object o)
@@ -337,17 +353,26 @@ namespace GHPCNativeLiveAAR
             catch { return null; }
         }
 
-        internal static void Color(object m, float r, float g, float b, float a)
+        internal static object ColorObject(float r, float g, float b, float a)
         {
-            if (m == null) return;
             Type ct = R.Find("UnityEngine.Color");
-            if (ct == null) return;
+            if (ct == null) return null;
             try
             {
                 ConstructorInfo c = ct.GetConstructor(new Type[] { typeof(float), typeof(float), typeof(float), typeof(float) });
-                if (c != null) R.Set(m, "color", c.Invoke(new object[] { r, g, b, a }));
+                return c == null ? null : c.Invoke(new object[] { r, g, b, a });
             }
-            catch { }
+            catch { return null; }
+        }
+
+        internal static void Color(object m, float r, float g, float b, float a)
+        {
+            if (m == null) return;
+            object co = ColorObject(r, g, b, a);
+            if (co == null) return;
+            try { R.Set(m, "color", co); } catch { }
+            try { R.Call(m, "SetColor", "_Color", co); } catch { }
+            try { R.Call(m, "SetColor", "_BaseColor", co); } catch { }
         }
 
         internal static object Line(string name, List<object> points, float width, float r, float g, float b, float a, int layer)
@@ -363,22 +388,21 @@ namespace GHPCNativeLiveAAR
             R.Set(lr, "endWidth", width);
             for (int i = 0; i < points.Count; i++) R.Call(lr, "SetPosition", i, points[i]);
 
-            object sh = Shader("Sprites/Default");
+            object sh = Shader("Unlit/Color");
+            if (sh == null) sh = Shader("Sprites/Default");
             object mat = NewMaterial(sh);
             if (mat != null)
             {
                 Color(mat, r, g, b, a);
                 R.Set(lr, "material", mat);
             }
-            Type col = R.Find("UnityEngine.Color");
-            try
+            object co = ColorObject(r, g, b, a);
+            if (co != null)
             {
-                ConstructorInfo cc = col.GetConstructor(new Type[] { typeof(float), typeof(float), typeof(float), typeof(float) });
-                object co = cc.Invoke(new object[] { r, g, b, a });
                 R.Set(lr, "startColor", co);
                 R.Set(lr, "endColor", co);
             }
-            catch { }
+            R.Set(lr, "numCapVertices", 2);
             return go;
         }
 
@@ -392,21 +416,18 @@ namespace GHPCNativeLiveAAR
 
         internal static void SolidBlack(object cam)
         {
-            Type color = R.Find("UnityEngine.Color");
-            Type cf = R.Find("UnityEngine.CameraClearFlags");
             try
             {
-                ConstructorInfo c = color.GetConstructor(new Type[] { typeof(float), typeof(float), typeof(float), typeof(float) });
-                R.Set(cam, "backgroundColor", c.Invoke(new object[] { 0f, 0f, 0f, 1f }));
-                R.Set(cam, "clearFlags", Enum.Parse(cf, "SolidColor"));
+                object co = ColorObject(.015f, .018f, .022f, 1f);
+                if (co != null) R.Set(cam, "backgroundColor", co);
+                R.Set(cam, "clearFlags", 2);
             }
             catch { }
         }
 
         internal static void DepthOnly(object cam)
         {
-            Type cf = R.Find("UnityEngine.CameraClearFlags");
-            try { R.Set(cam, "clearFlags", Enum.Parse(cf, "Depth")); } catch { }
+            try { R.Set(cam, "clearFlags", 3); } catch { }
         }
 
         internal static object PointLight(string name, object pos, float range, float intensity, int mask)
