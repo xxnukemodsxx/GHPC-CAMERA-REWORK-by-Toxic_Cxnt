@@ -1,0 +1,86 @@
+        private void CloneNativeAarModels(object targetGo, Dictionary<object, object> tmap, Dictionary<object, object> rmap)
+        {
+            Type aarModelType = R.FindType("AarModel");
+            Type rendererType = R.FindType("UnityEngine.Renderer");
+            Type meshRendererType = R.FindType("UnityEngine.MeshRenderer");
+            Type meshFilterType = R.FindType("UnityEngine.MeshFilter");
+            Type skinType = R.FindType("UnityEngine.SkinnedMeshRenderer");
+            if (aarModelType == null || rendererType == null) return;
+
+            List<object> models = UnityWorld.ComponentsInChildren(targetGo, aarModelType, true);
+            int cloned = 0;
+
+            for (int i = 0; i < models.Count; i++)
+            {
+                object model = models[i];
+                if (model == null) continue;
+
+                List<object> rs = R.ToObjectList(R.Get(model, "_renderers"));
+                if (rs.Count == 0)
+                {
+                    object mgo = R.Get(model, "gameObject");
+                    if (mgo != null) rs = UnityWorld.ComponentsInChildren(mgo, rendererType, true);
+                }
+
+                for (int j = 0; j < rs.Count; j++)
+                {
+                    object sr = rs[j];
+                    if (sr == null || rmap.ContainsKey(sr)) continue;
+
+                    object st = R.Get(sr, "transform");
+                    object dt;
+                    if (st == null || !tmap.TryGetValue(st, out dt)) continue;
+
+                    object dgo = R.Get(dt, "gameObject");
+                    Type actual = sr.GetType();
+                    object dr = null;
+
+                    if (skinType != null && skinType.IsAssignableFrom(actual))
+                    {
+                        dr = UnityWorld.AddComponent(dgo, skinType);
+                        R.Set(dr, "sharedMesh", R.Get(sr, "sharedMesh"));
+                        R.Set(dr, "localBounds", R.Get(sr, "localBounds"));
+
+                        object sbones = R.Get(sr, "bones");
+                        Array ba = sbones as Array;
+                        if (ba != null)
+                        {
+                            Type trType = R.FindType("UnityEngine.Transform");
+                            Array db = Array.CreateInstance(trType, ba.Length);
+                            for (int b = 0; b < ba.Length; b++)
+                            {
+                                object dbone;
+                                if (tmap.TryGetValue(ba.GetValue(b), out dbone)) db.SetValue(dbone, b);
+                            }
+                            R.Set(dr, "bones", db);
+                        }
+
+                        object sroot = R.Get(sr, "rootBone");
+                        object droot;
+                        if (sroot != null && tmap.TryGetValue(sroot, out droot)) R.Set(dr, "rootBone", droot);
+                        R.Set(dr, "updateWhenOffscreen", true);
+                    }
+                    else if (meshRendererType != null && meshRendererType.IsAssignableFrom(actual))
+                    {
+                        object smf = UnityWorld.GetComponent(R.Get(st, "gameObject"), meshFilterType);
+                        if (smf != null)
+                        {
+                            object dmf = UnityWorld.AddComponent(dgo, meshFilterType);
+                            R.Set(dmf, "sharedMesh", R.Get(smf, "sharedMesh"));
+                        }
+                        dr = UnityWorld.AddComponent(dgo, meshRendererType);
+                    }
+
+                    if (dr == null) continue;
+
+                    rmap[sr] = dr;
+                    R.Set(dgo, "layer", _xrayLayer);
+                    R.Set(dr, "sharedMaterials", R.Get(sr, "sharedMaterials"));
+                    R.Set(dr, "enabled", true);
+                    cloned++;
+                }
+            }
+
+            try { MelonLoader.MelonLogger.Msg("[Live AAR] Native AarModel renderers: " + cloned + " from " + models.Count + " models."); } catch { }
+        }
+
