@@ -617,57 +617,76 @@ namespace GHPCNativeLiveAAR
             }
         }
 
-        private void FitCameras(object visualRoot)
+        private void FitCameras()
         {
-            List<object> rs = U.Components(visualRoot, U.RendererType, true);
             object rootTr = R.Get(_root, "transform");
-            object center = R.Get(rootTr, "position");
-            float radius = 3f;
+            List<object> rs = U.Components(_root, U.RendererType, true);
 
-            List<float> xs = new List<float>(), ys = new List<float>(), zs = new List<float>();
-            List<object> centers = new List<object>();
-            List<float> extents = new List<float>();
+            bool have = false;
+            float minX = 0f, minY = 0f, minZ = 0f;
+            float maxX = 0f, maxY = 0f, maxZ = 0f;
 
             for (int i = 0; i < rs.Count; i++)
             {
-                if (!R.Bool(rs[i], "enabled", true)) continue;
-                object b = R.Get(rs[i], "bounds");
+                object rr = rs[i];
+                if (rr == null || !R.Bool(rr, "enabled", true)) continue;
+
+                string rn = (R.Str(rr, "name") ?? "").ToLowerInvariant();
+                if (rn.Contains("nativeaartrace")) continue;
+
+                object b = R.Get(rr, "bounds");
                 object cc = b == null ? null : R.Get(b, "center");
                 object e = b == null ? null : R.Get(b, "extents");
                 if (cc == null || e == null) continue;
 
                 float er = U.Mag(e);
-                object local = R.Call(rootTr, "InverseTransformPoint", cc);
-                if (local == null) continue;
-                float dist = U.Mag(local);
-                if (er < .01f || er > 14f || dist > 18f) continue;
+                object lc = R.Call(rootTr, "InverseTransformPoint", cc);
+                if (lc == null) continue;
+                if (er < .01f || er > 14f || U.Mag(lc) > 18f) continue;
 
-                xs.Add(U.X(local)); ys.Add(U.Y(local)); zs.Add(U.Z(local));
-                centers.Add(cc); extents.Add(er);
+                float cx = U.X(lc), cy = U.Y(lc), cz = U.Z(lc);
+                float ex = Math.Abs(U.X(e)), ey = Math.Abs(U.Y(e)), ez = Math.Abs(U.Z(e));
+
+                float ax0 = cx - ex, ay0 = cy - ey, az0 = cz - ez;
+                float ax1 = cx + ex, ay1 = cy + ey, az1 = cz + ez;
+
+                if (!have)
+                {
+                    minX = ax0; minY = ay0; minZ = az0;
+                    maxX = ax1; maxY = ay1; maxZ = az1;
+                    have = true;
+                }
+                else
+                {
+                    if (ax0 < minX) minX = ax0;
+                    if (ay0 < minY) minY = ay0;
+                    if (az0 < minZ) minZ = az0;
+                    if (ax1 > maxX) maxX = ax1;
+                    if (ay1 > maxY) maxY = ay1;
+                    if (az1 > maxZ) maxZ = az1;
+                }
             }
 
-            if (xs.Count > 0)
+            object center = R.Get(rootTr, "position");
+            float radius = 3f;
+
+            if (have)
             {
-                xs.Sort(); ys.Sort(); zs.Sort();
-                int m = xs.Count / 2;
-                float mx = xs[m], my = ys[m], mz = zs[m];
+                float mx = (minX + maxX) * .5f;
+                float my = (minY + maxY) * .5f;
+                float mz = (minZ + maxZ) * .5f;
                 center = R.Call(rootTr, "TransformPoint", U.V(mx, my, mz));
 
-                float reach = 1.8f;
-                for (int i = 0; i < centers.Count; i++)
-                {
-                    object lc = R.Call(rootTr, "InverseTransformPoint", centers[i]);
-                    float dx = U.X(lc)-mx, dy = U.Y(lc)-my, dz = U.Z(lc)-mz;
-                    float dd = (float)Math.Sqrt(dx*dx + dy*dy + dz*dz) + extents[i];
-                    if (dd > reach) reach = dd;
-                }
-                radius = Math.Max(1.8f, Math.Min(7.2f, reach * 1.03f));
+                float hx = Math.Max(.1f, (maxX - minX) * .5f);
+                float hy = Math.Max(.1f, (maxY - minY) * .5f);
+                float hz = Math.Max(.1f, (maxZ - minZ) * .5f);
+                radius = Math.Max(1.55f, Math.Min(6.5f, Math.Max(hx, Math.Max(hz, hy * 1.55f)) * 1.08f));
             }
 
             _radius = radius;
             _center = center;
 
-            object camPos = U.Add(center, U.V(radius * 2.15f, radius * .58f, -radius * 3.15f));
+            object camPos = U.Add(center, U.V(radius * 1.80f, radius * .48f, -radius * 2.55f));
 
             _baseCam = U.Camera("GHPC_NativeLiveAAR_BaseCamera");
             object baseGo = R.Get(_baseCam, "gameObject");
@@ -685,9 +704,21 @@ namespace GHPCNativeLiveAAR
             R.Set(xt, "rotation", R.Get(bt, "rotation"));
             ConfigureCamera(_xrayCam, U.Mask(_xrayLayer), 51f, true);
 
+            float vx = U.X(center) - U.X(camPos);
+            float vy = U.Y(center) - U.Y(camPos);
+            float vz = U.Z(center) - U.Z(camPos);
+            float vm = (float)Math.Sqrt(vx*vx + vy*vy + vz*vz);
+            if (vm < .001f) vm = 1f;
+            object backPos = U.V(
+                U.X(center) + vx / vm * radius * 4.5f,
+                U.Y(center) + vy / vm * radius * 4.5f,
+                U.Z(center) + vz / vm * radius * 4.5f);
+            object backdrop = U.BackdropQuad("GHPC_NativeLiveAAR_Backdrop", backPos, camPos, radius * 11f, _aarLayer);
+            if (backdrop != null) _created.Add(backdrop);
+
             int both = U.Mask(_aarLayer) | U.Mask(_xrayLayer);
-            object l1 = U.PointLight("GHPC_NativeLiveAAR_L1", U.Add(center, U.V(radius, radius, -radius)), radius*5f, 2.8f, both);
-            object l2 = U.PointLight("GHPC_NativeLiveAAR_L2", U.Add(center, U.V(-radius, radius*.40f, radius)), radius*4f, 1.25f, both);
+            object l1 = U.PointLight("GHPC_NativeLiveAAR_L1", U.Add(center, U.V(radius, radius, -radius)), radius*5f, 2.7f, both);
+            object l2 = U.PointLight("GHPC_NativeLiveAAR_L2", U.Add(center, U.V(-radius, radius*.35f, radius)), radius*4f, 1.2f, both);
             if (l1 != null) _created.Add(l1);
             if (l2 != null) _created.Add(l2);
         }
@@ -697,7 +728,7 @@ namespace GHPCNativeLiveAAR
             R.Set(cam, "nearClipPlane", .03f);
             R.Set(cam, "farClipPlane", 100f);
             R.Set(cam, "orthographic", false);
-            R.Set(cam, "fieldOfView", 30f);
+            R.Set(cam, "fieldOfView", 34f);
             R.Set(cam, "cullingMask", mask);
             R.Set(cam, "depth", depth);
             R.Set(cam, "enabled", true);
@@ -706,10 +737,10 @@ namespace GHPCNativeLiveAAR
             if (overlay) U.DepthOnly(cam); else U.SolidBlack(cam);
 
             float sw = U.ScreenW(), sh = U.ScreenH();
-            float w = Math.Max(380f, Math.Min(sw * .30f, 620f));
+            float w = Math.Max(400f, Math.Min(sw * .30f, 620f));
             float h = w * 9f / 16f;
             float px = sw - w - 18f;
-            float py = 74f;
+            float py = 82f;
             float nx = px / sw;
             float ny = 1f - ((py + h) / sh);
             R.Set(cam, "rect", U.Rect(nx, ny, w/sw, h/sh));
