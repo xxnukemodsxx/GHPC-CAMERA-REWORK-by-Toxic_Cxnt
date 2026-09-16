@@ -22,8 +22,13 @@ namespace GHPCNativeLiveAAR
                     t = a[i].GetType(name, false);
                     if (t != null) return t;
                     Type[] ts = a[i].GetTypes();
+                    string simple = name;
+                    int dot = simple.LastIndexOf('.');
+                    if (dot >= 0 && dot + 1 < simple.Length) simple = simple.Substring(dot + 1);
                     for (int j = 0; j < ts.Length; j++)
-                        if (ts[j].Name == name) return ts[j];
+                    {
+                        if (ts[j].FullName == name || ts[j].Name == name || ts[j].Name == simple) return ts[j];
+                    }
                 }
                 catch { }
             }
