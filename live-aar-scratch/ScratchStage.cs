@@ -910,7 +910,8 @@ namespace GHPCNativeLiveAAR
 
         internal void Begin(object shot, object aarRootGo, object vehicleRootGo)
         {
-            BuildAarVisualRules(aarRootGo);
+            HashSet<object> hitRenderers = CollectHitRenderers(shot);
+            BuildAarVisualRules(aarRootGo, hitRenderers);
             BuildAmmoAarModels(vehicleRootGo);
             if (!object.ReferenceEquals(aarRootGo, vehicleRootGo))
                 BuildAmmoAarModels(aarRootGo);
@@ -921,7 +922,7 @@ namespace GHPCNativeLiveAAR
         {
         }
 
-        private void BuildAarVisualRules(object targetGo)
+        private void BuildAarVisualRules(object targetGo, HashSet<object> hitRenderers)
         {
             Type avType = R.Find("GHPC.AarVisual");
             if (avType == null) avType = R.Find("AarVisual");
@@ -940,23 +941,71 @@ namespace GHPCNativeLiveAAR
                 bool swap = R.Bool(av, "SwitchMaterials", true);
                 bool hidden = R.Bool(av, "Hidden", false);
 
+                bool highlighted = false;
+                for (int j = 0; j < rs.Count; j++)
+                {
+                    if (rs[j] != null && hitRenderers.Contains(rs[j]))
+                    {
+                        highlighted = true;
+                        break;
+                    }
+                }
+
                 int mode = 2;
                 object mv = R.Get(av, "RenderMode");
                 if (mv == null) mv = R.Get(av, "_renderMode");
-                if (mv != null) { try { mode = Convert.ToInt32(mv); } catch { } }
+                if (mv != null)
+                {
+                    string mn = mv.ToString().ToLowerInvariant();
+                    if (mn.Contains("highlight")) mode = 0;
+                    else if (mn.Contains("xray")) mode = 1;
+                    else if (mn.Contains("always")) mode = 2;
+                    else
+                    {
+                        try { mode = Convert.ToInt32(mv); } catch { mode = 2; }
+                    }
+                }
 
                 AarRule rule = new AarRule
                 {
                     AarMaterial = mat,
                     SwitchMaterials = swap,
                     Mode = mode,
-                    Highlighted = true,
+                    Highlighted = highlighted,
                     Hidden = hidden
                 };
 
                 for (int j = 0; j < rs.Count; j++)
                     if (rs[j] != null) AarVisualRules[rs[j]] = rule;
             }
+        }
+
+        private HashSet<object> CollectHitRenderers(object rootShot)
+        {
+            HashSet<object> hit = new HashSet<object>(RefEq.Instance);
+            List<object> family = CollectShotFamily(rootShot);
+
+            for (int s = 0; s < family.Count; s++)
+            {
+                List<object> frames = R.List(R.Get(family[s], "AllShotFrames"));
+                for (int i = 0; i < frames.Count; i++)
+                {
+                    object hm = R.Get(frames[i], "HitModel");
+                    if (hm == null) continue;
+
+                    List<object> rs = R.List(R.Get(hm, "_renderers"));
+                    if (rs.Count == 0)
+                    {
+                        object go = R.Get(hm, "gameObject");
+                        if (go != null) rs = U.Components(go, U.RendererType, true);
+                    }
+
+                    for (int j = 0; j < rs.Count; j++)
+                        if (rs[j] != null) hit.Add(rs[j]);
+                }
+            }
+
+            return hit;
         }
 
         internal static List<object> VisualRenderers(object av)
