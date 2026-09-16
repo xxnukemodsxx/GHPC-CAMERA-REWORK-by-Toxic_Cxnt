@@ -41,6 +41,8 @@ namespace GHPCNativeLiveAAR
             if (targetGo == null) targetGo = R.Call(targetUnit, "GHPC.IUnit.get_gameObject");
             if (targetGo == null) throw new InvalidOperationException("target GameObject unavailable");
 
+            targetGo = ResolveAarRoot(targetGo, targetUnit);
+
             object sourceRoot = R.Get(targetGo, "transform");
             if (sourceRoot == null) throw new InvalidOperationException("target transform unavailable");
 
@@ -78,6 +80,67 @@ namespace GHPCNativeLiveAAR
             LiveAar.Log("native snapshot: AarVisual=" + state.AarVisualCount +
                         ", AarModel=" + state.AarModelCount +
                         ", renderers=" + state.ClonedRendererCount);
+        }
+
+
+        private object ResolveAarRoot(object initialGo, object targetUnit)
+        {
+            Type avType = R.Find("AarVisual");
+            Type amType = R.Find("AarModel");
+
+            object best = initialGo;
+            object tr = R.Get(initialGo, "transform");
+            object cur = tr;
+
+            for (int depth = 0; cur != null && depth < 16; depth++)
+            {
+                object go = R.Get(cur, "gameObject");
+                if (go != null)
+                {
+                    int av = avType == null ? 0 : U.Components(go, avType, true).Count;
+                    int am = amType == null ? 0 : U.Components(go, amType, true).Count;
+                    if (av > 0 || am > 0)
+                    {
+                        LiveAar.Log("AAR root resolved at depth " + depth + " with AarVisual=" + av + ", AarModel=" + am);
+                        return go;
+                    }
+                    best = go;
+                }
+                cur = R.Get(cur, "parent");
+            }
+
+            object[] related = new object[]
+            {
+                R.Get(targetUnit, "Vehicle"),
+                R.Get(targetUnit, "DamageableVehicle"),
+                R.Get(targetUnit, "CrewManager"),
+                R.Get(targetUnit, "LoadoutManager"),
+                R.Get(targetUnit, "Unit")
+            };
+
+            for (int i = 0; i < related.Length; i++)
+            {
+                object o = related[i];
+                if (o == null) continue;
+                object go = R.Get(o, "gameObject");
+                if (go == null)
+                {
+                    object rt = R.Get(o, "transform");
+                    go = rt == null ? null : R.Get(rt, "gameObject");
+                }
+                if (go == null) continue;
+
+                int av = avType == null ? 0 : U.Components(go, avType, true).Count;
+                int am = amType == null ? 0 : U.Components(go, amType, true).Count;
+                if (av > 0 || am > 0)
+                {
+                    LiveAar.Log("AAR root resolved from related object with AarVisual=" + av + ", AarModel=" + am);
+                    return go;
+                }
+            }
+
+            LiveAar.Log("AAR root fallback used; no native AAR components visible under candidate hierarchy.");
+            return best;
         }
 
         private void ResolveLayers()
