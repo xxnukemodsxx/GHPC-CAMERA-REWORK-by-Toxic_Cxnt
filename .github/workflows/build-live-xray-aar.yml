@@ -84,14 +84,12 @@ jobs:
           "SourcePayloadSHA256=5F9E40808B2EDA3F565BCC90A7849577C3D8E5BE0DE8725610916C1ED22DF2D9" | Add-Content dist\BUILD_INFO.txt
           "SHA256=$hash" | Add-Content dist\BUILD_INFO.txt
           "Size=$size" | Add-Content dist\BUILD_INFO.txt
+          Copy-Item build-src\GHPCLiveAARMod.cs dist\GHPCLiveAARMod.cs
+          Copy-Item build-src\LiveXrayCore.cs dist\LiveXrayCore.cs
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: GHPC_LiveXray_AAR_v0.4.0
-          path: |
-            dist/GHPC_LiveAAR.dll
-            dist/BUILD_INFO.txt
-            build-src/GHPCLiveAARMod.cs
-            build-src/LiveXrayCore.cs
+          path: dist/**
           if-no-files-found: error
