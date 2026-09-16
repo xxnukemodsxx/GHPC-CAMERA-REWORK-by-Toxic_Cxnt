@@ -333,6 +333,34 @@ namespace GHPCNativeLiveAAR
             return a;
         }
 
+        internal static Array TintedMaterials(object matsObj, float r, float g, float b, float a)
+        {
+            Init();
+            Array src = matsObj as Array;
+            if (src == null) return null;
+            Array dst = Array.CreateInstance(_material, src.Length);
+            for (int i = 0; i < src.Length; i++)
+            {
+                object original = src.GetValue(i);
+                object clone = CloneMaterial(original);
+                if (clone == null) clone = original;
+                if (clone != null) Color(clone, r, g, b, a);
+                dst.SetValue(clone, i);
+            }
+            return dst;
+        }
+
+        internal static Array SolidMaterials(int count, float r, float g, float b, float a)
+        {
+            Init();
+            object sh = Shader("Unlit/Color");
+            if (sh == null) sh = Shader("Sprites/Default");
+            object m = NewMaterial(sh);
+            if (m == null) return null;
+            Color(m, r, g, b, a);
+            return MaterialArray(m, Math.Max(1, count));
+        }
+
         internal static int ArrayLen(object a) { Array x = a as Array; return x == null ? 0 : x.Length; }
 
         internal static object Shader(string name)
@@ -428,6 +456,48 @@ namespace GHPCNativeLiveAAR
         internal static void DepthOnly(object cam)
         {
             try { R.Set(cam, "clearFlags", 3); } catch { }
+        }
+
+        internal static object BackdropQuad(string name, object pos, object lookAt, float size, int layer)
+        {
+            Init();
+            Type primitiveType = R.Find("UnityEngine.PrimitiveType");
+            if (primitiveType == null) return null;
+
+            object quadEnum;
+            try { quadEnum = Enum.Parse(primitiveType, "Quad"); }
+            catch { return null; }
+
+            object go = R.CallStatic(_go, "CreatePrimitive", quadEnum);
+            if (go == null) return null;
+
+            R.Set(go, "name", name);
+            R.Set(go, "layer", layer);
+            object tr = R.Get(go, "transform");
+            R.Set(tr, "position", pos);
+            R.Set(tr, "localScale", V(size, size, 1f));
+            R.Call(tr, "LookAt", lookAt);
+
+            Type colliderType = R.Find("UnityEngine.Collider");
+            object col = colliderType == null ? null : GetComponent(go, colliderType);
+            if (col != null) Destroy(col);
+
+            object mr = GetComponent(go, _meshRenderer);
+            if (mr != null)
+            {
+                object sh = Shader("Unlit/Color");
+                if (sh == null) sh = Shader("Sprites/Default");
+                object mat = NewMaterial(sh);
+                if (mat != null)
+                {
+                    Color(mat, .008f, .010f, .012f, 1f);
+                    R.Set(mr, "sharedMaterial", mat);
+                    R.Set(mr, "material", mat);
+                }
+                R.Set(mr, "enabled", true);
+            }
+
+            return go;
         }
 
         internal static object PointLight(string name, object pos, float range, float intensity, int mask)
