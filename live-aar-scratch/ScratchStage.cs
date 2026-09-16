@@ -633,9 +633,78 @@ namespace GHPCNativeLiveAAR
 
         private void CreateShotLines(object rootShot, object sourceRoot, object stageTransform)
         {
+            List<object> family = CollectShotFamily(rootShot);
+
+            for (int i = 0; i < family.Count; i++)
+            {
+                object shot = family[i];
+                bool child = !object.ReferenceEquals(shot, rootShot);
+                List<object> frames = R.List(R.Get(shot, "AllShotFrames"));
+                List<object> pts = new List<object>();
+
+                object start = R.Get(shot, "StartPosition");
+                if (start != null) pts.Add(ClampTracePoint(MapPoint(sourceRoot, stageTransform, start), child ? _radius * 1.35f : _radius * 1.75f));
+
+                bool jet = false;
+                for (int j = 0; j < frames.Count; j++)
+                {
+                    object wp = R.Get(frames[j], "WorldPosition");
+                    if (wp != null)
+                    {
+                        object mp = MapPoint(sourceRoot, stageTransform, wp);
+                        pts.Add(ClampTracePoint(mp, child ? _radius * 1.35f : _radius * 1.75f));
+                    }
+                    if (R.Bool(frames[j], "IsJet", false)) jet = true;
+                }
+
+                object stop = R.Get(shot, "StopPosition");
+                if (stop != null) pts.Add(ClampTracePoint(MapPoint(sourceRoot, stageTransform, stop), child ? _radius * 1.35f : _radius * 1.75f));
+
+                pts = RemoveDuplicatePoints(pts);
+                if (pts.Count < 2) continue;
+
+                float width = child ? Math.Max(.009f, _radius * .0045f) : Math.Max(.012f, _radius * .006f);
+
+                if (!child)
+                {
+                    for (int p = 0; p < pts.Count - 1; p++)
+                    {
+                        List<object> leg = new List<object>();
+                        leg.Add(pts[p]);
+                        leg.Add(pts[p + 1]);
+                        float shade = (p % 2 == 0) ? 1f : .66f;
+                        object line = U.Line("NativeAarMainTrace", leg, width, shade, shade, shade, 1f, _xrayLayer);
+                        if (line != null) _created.Add(line);
+                    }
+                    continue;
+                }
+
+                float power = R.Float(shot, "ActualPen", 0f) / 20f;
+                if (power < 0f) power = 0f;
+                if (power > 1f) power = 1f;
+
+                float rr = 1f;
+                float gg = .08f + .92f * power;
+                float bb = .015f;
+
+                if (jet)
+                {
+                    rr = 1f;
+                    gg = .72f;
+                    bb = .05f;
+                    width = Math.Max(width, .011f);
+                }
+
+                object spall = U.Line(jet ? "NativeAarJetTrace" : "NativeAarSpallTrace",
+                                      pts, width, rr, gg, bb, .96f, _xrayLayer);
+                if (spall != null) _created.Add(spall);
+            }
+        }
+
+        private List<object> CollectShotFamily(object rootShot)
+        {
             List<object> family = new List<object>();
             family.Add(rootShot);
-
             try
             {
                 Type at = R.Find("GHPC.AarController");
@@ -649,40 +718,47 @@ namespace GHPCNativeLiveAAR
                     int guard = 0;
                     while (p != null && guard++ < 20)
                     {
-                        if (object.ReferenceEquals(p, rootShot)) { family.Add(s); break; }
+                        if (object.ReferenceEquals(p, rootShot))
+                        {
+                            family.Add(s);
+                            break;
+                        }
                         p = R.Get(p, "ParentShot");
                     }
                 }
             }
             catch { }
+            return family;
+        }
 
-            for (int i = 0; i < family.Count; i++)
+        private object ClampTracePoint(object p, float maxRadius)
+        {
+            if (p == null || _center == null) return p;
+            float dx = U.X(p) - U.X(_center);
+            float dy = U.Y(p) - U.Y(_center);
+            float dz = U.Z(p) - U.Z(_center);
+            float mag = (float)Math.Sqrt(dx*dx + dy*dy + dz*dz);
+            if (mag <= maxRadius || mag < .0001f) return p;
+            float k = maxRadius / mag;
+            return U.V(U.X(_center) + dx*k, U.Y(_center) + dy*k, U.Z(_center) + dz*k);
+        }
+
+        private List<object> RemoveDuplicatePoints(List<object> pts)
+        {
+            List<object> result = new List<object>();
+            for (int i = 0; i < pts.Count; i++)
             {
-                object shot = family[i];
-                bool child = !object.ReferenceEquals(shot, rootShot);
-                List<object> frames = R.List(R.Get(shot, "AllShotFrames"));
-                List<object> pts = new List<object>();
-
-                bool jet = false;
-                for (int j = 0; j < frames.Count; j++)
+                object p = pts[i];
+                if (p == null) continue;
+                if (result.Count > 0)
                 {
-                    object wp = R.Get(frames[j], "WorldPosition");
-                    if (wp != null) pts.Add(MapPoint(sourceRoot, stageTransform, wp));
-                    if (R.Bool(frames[j], "IsJet", false)) jet = true;
+                    object q = result[result.Count - 1];
+                    float dx = U.X(p)-U.X(q), dy = U.Y(p)-U.Y(q), dz = U.Z(p)-U.Z(q);
+                    if (dx*dx + dy*dy + dz*dz < .000025f) continue;
                 }
-
-                object stop = R.Get(shot, "StopPosition");
-                if (stop != null) pts.Add(MapPoint(sourceRoot, stageTransform, stop));
-                if (pts.Count < 2) continue;
-
-                float r = child ? 1f : .95f;
-                float g = child ? .10f : .72f;
-                float b = child ? .05f : .05f;
-                if (jet) { r = .08f; g = .92f; b = 1f; }
-
-                object line = U.Line("NativeAarTrace", pts, Math.Max(.012f, _radius*.008f), r, g, b, 1f, _xrayLayer);
-                if (line != null) _created.Add(line);
+                result.Add(p);
             }
+            return result;
         }
 
         private object MapPoint(object sourceRoot, object stageTransform, object world)
