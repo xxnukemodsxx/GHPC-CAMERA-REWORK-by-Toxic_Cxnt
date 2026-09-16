@@ -14,6 +14,7 @@ namespace GHPCNativeLiveAAR
         private int _aarLayer = 30;
         private int _xrayLayer = 31;
         private float _radius = 3f;
+        private object _center;
         private DateTime _hideAt;
         private bool _active;
 
@@ -36,15 +37,14 @@ namespace GHPCNativeLiveAAR
             U.Init();
             ResolveLayers();
 
-            object targetGo = R.Get(targetUnit, "gameObject");
-            if (targetGo == null) targetGo = R.Call(targetUnit, "get_gameObject");
-            if (targetGo == null) targetGo = R.Call(targetUnit, "GHPC.IUnit.get_gameObject");
-            if (targetGo == null) throw new InvalidOperationException("target GameObject unavailable");
+            object vehicleGo = R.Get(targetUnit, "gameObject");
+            if (vehicleGo == null) vehicleGo = R.Call(targetUnit, "get_gameObject");
+            if (vehicleGo == null) vehicleGo = R.Call(targetUnit, "GHPC.IUnit.get_gameObject");
+            if (vehicleGo == null) throw new InvalidOperationException("target GameObject unavailable");
 
-            targetGo = ResolveAarRoot(targetGo, targetUnit);
-
-            object sourceRoot = R.Get(targetGo, "transform");
-            if (sourceRoot == null) throw new InvalidOperationException("target transform unavailable");
+            object aarRootGo = ResolveAarRoot(vehicleGo, targetUnit);
+            object sourceRoot = R.Get(aarRootGo, "transform");
+            if (sourceRoot == null) throw new InvalidOperationException("target AAR transform unavailable");
 
             _root = U.GO("GHPC_NativeLiveAAR_Stage");
             _created.Add(_root);
@@ -60,16 +60,17 @@ namespace GHPCNativeLiveAAR
             NativeCaptureState state = new NativeCaptureState();
             try
             {
-                state.Begin(shot, targetGo);
-                CloneNativeAarRenderers(targetGo, tmap, state);
+                state.Begin(shot, aarRootGo, vehicleGo);
+                CloneNativeAarRenderers(aarRootGo, sourceRoot, stageTr, tmap, state);
+                CloneVehicleShell(aarRootGo, sourceRoot, stageTr, tmap, state);
             }
             finally
             {
                 state.Restore();
             }
 
-            if (state.ClonedRendererCount == 0)
-                throw new InvalidOperationException("GHPC exposed no AAR renderers for this vehicle");
+            if (state.ClonedRendererCount == 0 && state.ShellRendererCount == 0)
+                throw new InvalidOperationException("GHPC exposed no AAR or vehicle renderers for this target");
 
             ApplyRecordedCrewState(targetUnit, pose, state.RendererMap);
             FitCameras(visualRoot);
@@ -79,7 +80,9 @@ namespace GHPCNativeLiveAAR
 
             LiveAar.Log("native snapshot: AarVisual=" + state.AarVisualCount +
                         ", AarModel=" + state.AarModelCount +
-                        ", renderers=" + state.ClonedRendererCount);
+                        ", directHitModels=" + state.DirectHitModelCount +
+                        ", aarRenderers=" + state.ClonedRendererCount +
+                        ", shellRenderers=" + state.ShellRendererCount);
         }
 
 
