@@ -1,0 +1,93 @@
+        private void FitCameraAndLights(object stageTransform, object visualRoot, XraySettings settings)
+        {
+            Type rendererType = R.FindType("UnityEngine.Renderer");
+            List<object> rs = UnityWorld.ComponentsInChildren(R.Get(visualRoot, "gameObject"), rendererType, true);
+            object stagePos = R.Get(stageTransform, "position");
+            object center = stagePos;
+            float radius = 3.2f;
+
+            List<float> xs = new List<float>();
+            List<float> ys = new List<float>();
+            List<float> zs = new List<float>();
+            List<object> goodCenters = new List<object>();
+            List<float> goodExtents = new List<float>();
+
+            for (int i = 0; i < rs.Count; i++)
+            {
+                object b = R.Get(rs[i], "bounds");
+                object c = b == null ? null : R.Get(b, "center");
+                object e = b == null ? null : R.Get(b, "extents");
+                if (c == null || e == null) continue;
+
+                float er = UnityWorld.Mag(e);
+                object local = R.Call(stageTransform, "InverseTransformPoint", new object[] { c });
+                if (local == null) continue;
+                float dist = UnityWorld.Mag(local);
+
+                // Some vehicle hierarchies contain marker/helper meshes with enormous or
+                // far-away bounds. Never let those decide the AAR camera framing.
+                if (er > 14f || dist > 18f)
+                {
+                    R.Set(rs[i], "enabled", false);
+                    continue;
+                }
+                if (er < .015f) continue;
+
+                xs.Add(UnityWorld.X(local));
+                ys.Add(UnityWorld.Y(local));
+                zs.Add(UnityWorld.Z(local));
+                goodCenters.Add(c);
+                goodExtents.Add(er);
+            }
+
+            if (xs.Count > 0)
+            {
+                xs.Sort(); ys.Sort(); zs.Sort();
+                int mid = xs.Count / 2;
+                float mx = (xs.Count % 2 == 0) ? (xs[mid - 1] + xs[mid]) * .5f : xs[mid];
+                float my = (ys.Count % 2 == 0) ? (ys[mid - 1] + ys[mid]) * .5f : ys[mid];
+                float mz = (zs.Count % 2 == 0) ? (zs[mid - 1] + zs[mid]) * .5f : zs[mid];
+
+                object localCenter = UnityWorld.Vec3(mx, my, mz);
+                center = R.Call(stageTransform, "TransformPoint", new object[] { localCenter });
+
+                float maxReach = 1.6f;
+                for (int i = 0; i < goodCenters.Count; i++)
+                {
+                    object lc = R.Call(stageTransform, "InverseTransformPoint", new object[] { goodCenters[i] });
+                    if (lc == null) continue;
+                    float dx = UnityWorld.X(lc) - mx;
+                    float dy = UnityWorld.Y(lc) - my;
+                    float dz = UnityWorld.Z(lc) - mz;
+                    float d = (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
+                    float reach = d + goodExtents[i];
+                    if (reach > maxReach) maxReach = reach;
+                }
+
+                radius = Math.Max(1.8f, Math.Min(8.0f, maxReach * 1.08f));
+            }
+
+            _radius = radius;
+
+            _cameraGo = UnityWorld.NewGameObject("GHPC_LiveXrayAAR_Camera"); _created.Add(_cameraGo);
+            Type camType = R.FindType("UnityEngine.Camera"); _camera = UnityWorld.AddComponent(_cameraGo, camType);
+            object ct = R.Get(_cameraGo, "transform");
+
+            object cp = UnityWorld.Add(center, UnityWorld.Vec3(radius * 1.15f, radius * .34f, -radius * 1.72f));
+            R.Set(ct, "position", cp);
+            R.Call(ct, "LookAt", new object[] { center });
+
+            R.Set(_camera, "nearClipPlane", .03f);
+            R.Set(_camera, "farClipPlane", Math.Max(40f, radius * 7f));
+            R.Set(_camera, "orthographic", true);
+            R.Set(_camera, "orthographicSize", Math.Max(1.15f, Math.Min(5.8f, radius * .62f)));
+            R.Set(_camera, "depth", 50f);
+            R.Set(_camera, "enabled", true);
+            UnityWorld.SetCameraBackground(_camera, .015f, .018f, .016f, 1f);
+            RefreshViewport(settings);
+
+            _light1 = UnityWorld.CreatePointLight(UnityWorld.Add(center, UnityWorld.Vec3(radius * 1.1f, radius * 1.15f, -radius)), radius * 5f, 3.2f);
+            if (_light1 != null) _created.Add(_light1);
+            _light2 = UnityWorld.CreatePointLight(UnityWorld.Add(center, UnityWorld.Vec3(-radius, radius * .45f, radius)), radius * 4.5f, 1.8f);
+            if (_light2 != null) _created.Add(_light2);
+        }
