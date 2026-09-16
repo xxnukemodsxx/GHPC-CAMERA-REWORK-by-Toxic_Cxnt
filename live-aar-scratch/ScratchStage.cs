@@ -318,43 +318,47 @@ namespace GHPCNativeLiveAAR
             }
         }
 
-        private void CloneNativeAarRenderers(object targetGo, Dictionary<object, object> tmap, NativeCaptureState state)
+        private void CloneNativeAarRenderers(object aarRootGo, object sourceRoot, object stageTransform, Dictionary<object, object> tmap, NativeCaptureState state)
         {
-            List<object> all = U.Components(targetGo, U.RendererType, true);
             HashSet<object> selected = new HashSet<object>(RefEq.Instance);
-
             foreach (object r in state.AarVisualRules.Keys) selected.Add(r);
             foreach (object r in state.AarModelRenderers) selected.Add(r);
+            foreach (object r in state.DirectHitModelRenderers) selected.Add(r);
 
-            // Never fall back to the whole live vehicle if native AAR metadata exists.
-            // That fallback was the reason the old builds looked like a miniature normal tank.
             if (selected.Count == 0)
                 throw new InvalidOperationException("vehicle has no native AarVisual/AarModel renderer set");
 
-            for (int i = 0; i < all.Count; i++)
+            foreach (object sr in selected)
             {
-                object sr = all[i];
-                if (sr == null || !selected.Contains(sr)) continue;
-
-                object st = R.Get(sr, "transform");
-                object dt;
-                if (st == null || !tmap.TryGetValue(st, out dt)) continue;
+                if (sr == null) continue;
 
                 AarRule rule;
                 bool hasRule = state.AarVisualRules.TryGetValue(sr, out rule);
-                bool modelOnly = state.AarModelRenderers.Contains(sr);
+                bool directHit = state.DirectHitModelRenderers.Contains(sr);
+                bool modelOnly = state.AarModelRenderers.Contains(sr) || directHit;
 
-                object dr = CloneRenderer(sr, dt, tmap);
+                if (hasRule && rule.Hidden) continue;
+                if (hasRule && rule.Mode == 0 && !rule.Highlighted) continue;
+
+                object st = R.Get(sr, "transform");
+                object dt = null;
+                if (st != null) tmap.TryGetValue(st, out dt);
+
+                object dr = dt != null
+                    ? CloneRenderer(sr, dt, tmap)
+                    : CloneLooseRenderer(sr, sourceRoot, stageTransform, tmap);
+
                 if (dr == null) continue;
 
                 int layer = modelOnly ? _xrayLayer : _aarLayer;
                 if (hasRule && rule.Mode == 1) layer = _xrayLayer;
 
-                object dgo = R.Get(dt, "gameObject");
-                R.Set(dgo, "layer", layer);
+                object dgo = R.Get(R.Get(dr, "transform"), "gameObject");
+                if (dgo == null && dt != null) dgo = R.Get(dt, "gameObject");
+                if (dgo != null) R.Set(dgo, "layer", layer);
 
                 object mats = R.Get(sr, "sharedMaterials");
-                if (hasRule && rule.SwitchMaterials && rule.AarMaterial != null)
+                if (hasRule && rule.Highlighted && rule.SwitchMaterials && rule.AarMaterial != null)
                     mats = U.MaterialArray(rule.AarMaterial, Math.Max(1, U.ArrayLen(mats)));
 
                 R.Set(dr, "sharedMaterials", mats);
@@ -362,6 +366,93 @@ namespace GHPCNativeLiveAAR
                 state.RendererMap[sr] = dr;
                 state.ClonedRendererCount++;
             }
+        }
+
+        private void CloneVehicleShell(object aarRootGo, object sourceRoot, object stageTransform, Dictionary<object, object> tmap, NativeCaptureState state)
+        {
+            List<object> all = U.Components(aarRootGo, U.RendererType, true);
+            HashSet<object> native = new HashSet<object>(RefEq.Instance);
+            foreach (object r in state.AarVisualRules.Keys) native.Add(r);
+            foreach (object r in state.AarModelRenderers) native.Add(r);
+            foreach (object r in state.DirectHitModelRenderers) native.Add(r);
+
+            for (int i = 0; i < all.Count; i++)
+            {
+                object sr = all[i];
+                if (sr == null || native.Contains(sr)) continue;
+                if (!R.Bool(sr, "enabled", false)) continue;
+
+                object st = R.Get(sr, "transform");
+                if (st == null) continue;
+                string n = (R.Str(st, "name") ?? R.Str(sr, "name") ?? "").ToLowerInvariant();
+                if (n.Contains("shadow") || n.Contains("decal") || n.Contains("dust") ||
+                    n.Contains("smoke") || n.Contains("particle") || n.Contains("marker") ||
+                    n.Contains("icon") || n.Contains("text") || n.Contains("canvas"))
+                    continue;
+
+                object b = R.Get(sr, "bounds");
+                object ext = b == null ? null : R.Get(b, "extents");
+                object cen = b == null ? null : R.Get(b, "center");
+                if (ext == null || cen == null) continue;
+
+                float er = U.Mag(ext);
+                if (er < .03f || er > 10f) continue;
+
+                object lc = R.Call(sourceRoot, "InverseTransformPoint", cen);
+                if (lc == null || U.Mag(lc) > 14f) continue;
+
+                object dt;
+                if (!tmap.TryGetValue(st, out dt)) continue;
+
+                object dr = CloneRenderer(sr, dt, tmap);
+                if (dr == null) continue;
+
+                object dgo = R.Get(dt, "gameObject");
+                if (dgo != null) R.Set(dgo, "layer", _aarLayer);
+
+                R.Set(dr, "sharedMaterials", R.Get(sr, "sharedMaterials"));
+                R.Set(dr, "enabled", true);
+                state.RendererMap[sr] = dr;
+                state.ShellRendererCount++;
+            }
+        }
+
+        private object CloneLooseRenderer(object sr, object sourceRoot, object stageTransform, Dictionary<object, object> tmap)
+        {
+            object st = R.Get(sr, "transform");
+            if (st == null) return null;
+
+            Type actual = sr.GetType();
+            if (U.MeshRendererType == null || !U.MeshRendererType.IsAssignableFrom(actual))
+                return null;
+
+            object go = U.GO("NativeAarLoose_" + (R.Str(st, "name") ?? "model"));
+            _created.Add(go);
+            object dt = R.Get(go, "transform");
+            R.Call(dt, "SetParent", stageTransform, false);
+
+            object srcPos = R.Get(st, "position");
+            object localPos = R.Call(sourceRoot, "InverseTransformPoint", srcPos);
+            if (localPos != null) R.Set(dt, "localPosition", localPos);
+
+            object srcRootRot = R.Get(sourceRoot, "rotation");
+            object srcRot = R.Get(st, "rotation");
+            if (srcRootRot != null && srcRot != null)
+                R.Set(dt, "localRotation", U.RelativeRotation(srcRootRot, srcRot));
+
+            object srcLossy = R.Get(st, "lossyScale");
+            object rootLossy = R.Get(sourceRoot, "lossyScale");
+            if (srcLossy != null && rootLossy != null)
+                R.Set(dt, "localScale", U.DivScale(srcLossy, rootLossy));
+
+            object smf = U.GetComponent(R.Get(st, "gameObject"), U.MeshFilterType);
+            if (smf != null)
+            {
+                object dmf = U.AddComponent(go, U.MeshFilterType);
+                R.Set(dmf, "sharedMesh", R.Get(smf, "sharedMesh"));
+            }
+
+            return U.AddComponent(go, U.MeshRendererType);
         }
 
         private object CloneRenderer(object sr, object dstTransform, Dictionary<object, object> tmap)
