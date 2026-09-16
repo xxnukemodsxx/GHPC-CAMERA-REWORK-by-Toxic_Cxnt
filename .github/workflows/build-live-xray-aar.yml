@@ -28,7 +28,7 @@ jobs:
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
             $sourceHash = ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '')
           } finally { $sha.Dispose() }
-          if ($sourceHash -ne '34717C4F2DBE928766FC75381BC4D278766B45C589D5B2651986679192B040DE') {
+          if ($sourceHash -ne '62152319407035D7906388985E596F67F1185AF5BA1E32265C066AE9C6CD9760') {
             throw "Source payload hash mismatch: $sourceHash"
           }
 
@@ -81,7 +81,7 @@ jobs:
           "Version=0.7.0" | Set-Content dist\BUILD_INFO.txt
           "AssemblyCSharpTargetSHA256=3321284967EC09971E0FB971ABC5D9B8E881F9EC61CD85EB90C5EDCCD11D8490" | Add-Content dist\BUILD_INFO.txt
           "MelonLoaderCompileTarget=0.6.1 net35" | Add-Content dist\BUILD_INFO.txt
-          "SourcePayloadSHA256=34717C4F2DBE928766FC75381BC4D278766B45C589D5B2651986679192B040DE" | Add-Content dist\BUILD_INFO.txt
+          "SourcePayloadSHA256=62152319407035D7906388985E596F67F1185AF5BA1E32265C066AE9C6CD9760" | Add-Content dist\BUILD_INFO.txt
           "SHA256=$hash" | Add-Content dist\BUILD_INFO.txt
           "Size=$size" | Add-Content dist\BUILD_INFO.txt
           Copy-Item build-src\GHPCLiveAARMod.cs dist\GHPCLiveAARMod.cs
