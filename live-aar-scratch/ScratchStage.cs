@@ -87,6 +87,47 @@ namespace GHPCNativeLiveAAR
         {
             Type avType = R.Find("AarVisual");
             Type amType = R.Find("AarModel");
+            Type lateType = R.Find("LateFollowTarget");
+
+            // GHPC deliberately detaches much of a vehicle's visible/armor hierarchy and
+            // drives it through LateFollowTarget. Vanilla AarVisuals commonly live on
+            // that detached follower tree rather than beneath GHPC.Vehicle.Vehicle.
+            if (lateType != null)
+            {
+                object directLate = U.GetComponent(initialGo, lateType);
+                object direct = BestLateFollowerRoot(directLate, avType, amType);
+                if (direct != null)
+                {
+                    int av = avType == null ? 0 : U.Components(direct, avType, true).Count;
+                    int am = amType == null ? 0 : U.Components(direct, amType, true).Count;
+                    LiveAar.Log("AAR root resolved from vehicle LateFollowTarget with AarVisual=" + av + ", AarModel=" + am);
+                    return direct;
+                }
+
+                List<object> lates = U.Components(initialGo, lateType, true);
+                object bestLateGo = null;
+                int bestLateScore = 0;
+                for (int i = 0; i < lates.Count; i++)
+                {
+                    object go = BestLateFollowerRoot(lates[i], avType, amType);
+                    if (go == null) continue;
+                    int av = avType == null ? 0 : U.Components(go, avType, true).Count;
+                    int am = amType == null ? 0 : U.Components(go, amType, true).Count;
+                    int score = av * 100 + am;
+                    if (score > bestLateScore)
+                    {
+                        bestLateScore = score;
+                        bestLateGo = go;
+                    }
+                }
+                if (bestLateGo != null)
+                {
+                    int av = avType == null ? 0 : U.Components(bestLateGo, avType, true).Count;
+                    int am = amType == null ? 0 : U.Components(bestLateGo, amType, true).Count;
+                    LiveAar.Log("AAR root resolved from nested LateFollowTarget with AarVisual=" + av + ", AarModel=" + am);
+                    return bestLateGo;
+                }
+            }
 
             object best = initialGo;
             object tr = R.Get(initialGo, "transform");
@@ -139,8 +180,50 @@ namespace GHPCNativeLiveAAR
                 }
             }
 
-            LiveAar.Log("AAR root fallback used; no native AAR components visible under candidate hierarchy.");
+            LiveAar.Log("AAR root fallback used; no native AAR components visible under vehicle or LateFollowTarget hierarchy.");
             return best;
+        }
+
+        private object BestLateFollowerRoot(object lateFollowTarget, Type avType, Type amType)
+        {
+            if (lateFollowTarget == null) return null;
+            List<object> followers = R.List(R.Get(lateFollowTarget, "_lateFollowers"));
+            if (followers.Count == 0) followers = R.List(R.Get(lateFollowTarget, "LateFollowers"));
+
+            object best = null;
+            int bestScore = 0;
+            for (int i = 0; i < followers.Count; i++)
+            {
+                object f = followers[i];
+                if (f == null) continue;
+
+                object tr = R.Get(f, "transform");
+                if (tr == null)
+                {
+                    object go0 = R.Get(f, "gameObject");
+                    tr = go0 == null ? null : R.Get(go0, "transform");
+                }
+                if (tr == null) continue;
+
+                // A nested follower may point at turret/gun armor. Walk upward a few
+                // levels to capture the full detached vehicle visual tree.
+                object cur = tr;
+                for (int up = 0; cur != null && up < 8; up++)
+                {
+                    object go = R.Get(cur, "gameObject");
+                    if (go == null) break;
+                    int av = avType == null ? 0 : U.Components(go, avType, true).Count;
+                    int am = amType == null ? 0 : U.Components(go, amType, true).Count;
+                    int score = av * 100 + am;
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        best = go;
+                    }
+                    cur = R.Get(cur, "parent");
+                }
+            }
+            return bestScore > 0 ? best : null;
         }
 
         private void ResolveLayers()
