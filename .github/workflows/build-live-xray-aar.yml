@@ -15,7 +15,7 @@ jobs:
       - name: Reconstruct source
         shell: powershell
         run: |
-          $payload = 'live-xray-build\v040_payload.gz'
+          $payload = 'live-xray-build\v070_payload.gz'
           if (-not (Test-Path $payload)) { throw "Missing source payload: $payload" }
           $input = [System.IO.File]::OpenRead((Join-Path $PWD $payload))
           $gzip = New-Object System.IO.Compression.GZipStream($input,[System.IO.Compression.CompressionMode]::Decompress)
@@ -28,7 +28,7 @@ jobs:
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
             $sourceHash = ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '')
           } finally { $sha.Dispose() }
-          if ($sourceHash -ne '5F9E40808B2EDA3F565BCC90A7849577C3D8E5BE0DE8725610916C1ED22DF2D9') {
+          if ($sourceHash -ne '34717C4F2DBE928766FC75381BC4D278766B45C589D5B2651986679192B040DE') {
             throw "Source payload hash mismatch: $sourceHash"
           }
 
@@ -38,36 +38,6 @@ jobs:
           New-Item -ItemType Directory -Force build-src | Out-Null
           [IO.File]::WriteAllText((Join-Path $PWD 'build-src\GHPCLiveAARMod.cs'),$parts[0],(New-Object Text.UTF8Encoding($false)))
           [IO.File]::WriteAllText((Join-Path $PWD 'build-src\LiveXrayCore.cs'),$parts[1],(New-Object Text.UTF8Encoding($false)))
-
-      - name: Patch v0.5 X-ray renderer fallback
-        shell: powershell
-        run: |
-          $path = 'build-src\LiveXrayCore.cs'
-          $src = Get-Content $path -Raw
-          $src = $src.Replace('0.4.0','0.5.0')
-          $newClone = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('ICAgICAgICBwcml2YXRlIHZvaWQgQ2xvbmVWaXN1YWxzKG9iamVjdCBzb3VyY2VSb290LCBvYmplY3QgdmlzdWFsUm9vdCwgRGljdGlvbmFyeTxvYmplY3QsIG9iamVjdD4gdG1hcCwgRGljdGlvbmFyeTxvYmplY3QsIG9iamVjdD4gcm1hcCwgRGljdGlvbmFyeTxvYmplY3QsIFZpc3VhbFJ1bGU+IHJ1bGVzKQogICAgICAgIHsKICAgICAgICAgICAgVHlwZSByZW5kZXJlclR5cGUgPSBSLkZpbmRUeXBlKCJVbml0eUVuZ2luZS5SZW5kZXJlciIpOwogICAgICAgICAgICBUeXBlIG1lc2hSZW5kZXJlclR5cGUgPSBSLkZpbmRUeXBlKCJVbml0eUVuZ2luZS5NZXNoUmVuZGVyZXIiKTsKICAgICAgICAgICAgVHlwZSBtZXNoRmlsdGVyVHlwZSA9IFIuRmluZFR5cGUoIlVuaXR5RW5naW5lLk1lc2hGaWx0ZXIiKTsKICAgICAgICAgICAgVHlwZSBza2luVHlwZSA9IFIuRmluZFR5cGUoIlVuaXR5RW5naW5lLlNraW5uZWRNZXNoUmVuZGVyZXIiKTsKICAgICAgICAgICAgaWYgKHJlbmRlcmVyVHlwZSA9PSBudWxsKSB0aHJvdyBuZXcgSW52YWxpZE9wZXJhdGlvbkV4Y2VwdGlvbigiVW5pdHkgUmVuZGVyZXIgdHlwZSB1bmF2YWlsYWJsZSIpOwoKICAgICAgICAgICAgTGlzdDxvYmplY3Q+IHJlbmRlcmVycyA9IFVuaXR5V29ybGQuQ29tcG9uZW50c0luQ2hpbGRyZW4oUi5HZXQoc291cmNlUm9vdCwgImdhbWVPYmplY3QiKSwgcmVuZGVyZXJUeXBlLCB0cnVlKTsKICAgICAgICAgICAgaW50IGNsb25lZCA9IDA7CgogICAgICAgICAgICBmb3IgKGludCBpID0gMDsgaSA8IHJlbmRlcmVycy5Db3VudDsgaSsrKQogICAgICAgICAgICB7CiAgICAgICAgICAgICAgICBvYmplY3Qgc3IgPSByZW5kZXJlcnNbaV07CiAgICAgICAgICAgICAgICBpZiAoc3IgPT0gbnVsbCkgY29udGludWU7CgogICAgICAgICAgICAgICAgVmlzdWFsUnVsZSB2ciA9IG51bGw7CiAgICAgICAgICAgICAgICBib29sIHJ1bGVkID0gcnVsZXMgIT0gbnVsbCAmJiBydWxlcy5UcnlHZXRWYWx1ZShzciwgb3V0IHZyKTsKICAgICAgICAgICAgICAgIGlmIChydWxlZCAmJiB2ciAhPSBudWxsICYmIHZyLkhpZGRlbikgY29udGludWU7CgogICAgICAgICAgICAgICAgb2JqZWN0IHN0ID0gUi5HZXQoc3IsICJ0cmFuc2Zvcm0iKTsKICAgICAgICAgICAgICAgIG9iamVjdCBkdDsKICAgICAgICAgICAgICAgIGlmIChzdCA9PSBudWxsIHx8ICF0bWFwLlRyeUdldFZhbHVlKHN0LCBvdXQgZHQpKSBjb250aW51ZTsKCiAgICAgICAgICAgICAgICBzdHJpbmcgcm4gPSBSLlN0cihzciwgIm5hbWUiKTsKICAgICAgICAgICAgICAgIHN0cmluZyBsb3cgPSBybiA9PSBudWxsID8gIiIgOiBybi5Ub0xvd2VySW52YXJpYW50KCk7CiAgICAgICAgICAgICAgICBpZiAoIXJ1bGVkICYmIChsb3cuQ29udGFpbnMoInNoYWRvdyIpIHx8IGxvdy5Db250YWlucygiZGVjYWwiKSB8fCBsb3cuQ29udGFpbnMoInRyYWNrbWFyayIpIHx8IGxvdy5Db250YWlucygiZHVzdCIpIHx8IGxvdy5Db250YWlucygic21va2UiKSkpIGNvbnRpbnVlOwoKICAgICAgICAgICAgICAgIG9iamVjdCBkZ28gPSBSLkdldChkdCwgImdhbWVPYmplY3QiKTsKICAgICAgICAgICAgICAgIFR5cGUgYWN0dWFsID0gc3IuR2V0VHlwZSgpOwogICAgICAgICAgICAgICAgb2JqZWN0IGRyID0gbnVsbDsKCiAgICAgICAgICAgICAgICBpZiAoc2tpblR5cGUgIT0gbnVsbCAmJiBza2luVHlwZS5Jc0Fzc2lnbmFibGVGcm9tKGFjdHVhbCkpCiAgICAgICAgICAgICAgICB7CiAgICAgICAgICAgICAgICAgICAgZHIgPSBVbml0eVdvcmxkLkFkZENvbXBvbmVudChkZ28sIHNraW5UeXBlKTsKICAgICAgICAgICAgICAgICAgICBSLlNldChkciwgInNoYXJlZE1lc2giLCBSLkdldChzciwgInNoYXJlZE1lc2giKSk7CiAgICAgICAgICAgICAgICAgICAgUi5TZXQoZHIsICJsb2NhbEJvdW5kcyIsIFIuR2V0KHNyLCAibG9jYWxCb3VuZHMiKSk7CiAgICAgICAgICAgICAgICAgICAgb2JqZWN0IHNib25lcyA9IFIuR2V0KHNyLCAiYm9uZXMiKTsKICAgICAgICAgICAgICAgICAgICBBcnJheSBiYSA9IHNib25lcyBhcyBBcnJheTsKICAgICAgICAgICAgICAgICAgICBpZiAoYmEgIT0gbnVsbCkKICAgICAgICAgICAgICAgICAgICB7CiAgICAgICAgICAgICAgICAgICAgICAgIFR5cGUgdHJUeXBlID0gUi5GaW5kVHlwZSgiVW5pdHlFbmdpbmUuVHJhbnNmb3JtIik7CiAgICAgICAgICAgICAgICAgICAgICAgIEFycmF5IGRiID0gQXJyYXkuQ3JlYXRlSW5zdGFuY2UodHJUeXBlLCBiYS5MZW5ndGgpOwogICAgICAgICAgICAgICAgICAgICAgICBmb3IgKGludCBiID0gMDsgYiA8IGJhLkxlbmd0aDsgYisrKQogICAgICAgICAgICAgICAgICAgICAgICB7CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBvYmplY3QgZGJvbmU7CiAgICAgICAgICAgICAgICAgICAgICAgICAgICBpZiAodG1hcC5UcnlHZXRWYWx1ZShiYS5HZXRWYWx1ZShiKSwgb3V0IGRib25lKSkgZGIuU2V0VmFsdWUoZGJvbmUsIGIpOwogICAgICAgICAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgICAgICAgICAgICAgIFIuU2V0KGRyLCAiYm9uZXMiLCBkYik7CiAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgICAgIG9iamVjdCBzcm9vdCA9IFIuR2V0KHNyLCAicm9vdEJvbmUiKTsKICAgICAgICAgICAgICAgICAgICBvYmplY3QgZHJvb3Q7CiAgICAgICAgICAgICAgICAgICAgaWYgKHNyb290ICE9IG51bGwgJiYgdG1hcC5UcnlHZXRWYWx1ZShzcm9vdCwgb3V0IGRyb290KSkgUi5TZXQoZHIsICJyb290Qm9uZSIsIGRyb290KTsKICAgICAgICAgICAgICAgICAgICBSLlNldChkciwgInVwZGF0ZVdoZW5PZmZzY3JlZW4iLCB0cnVlKTsKICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgIGVsc2UgaWYgKG1lc2hSZW5kZXJlclR5cGUgIT0gbnVsbCAmJiBtZXNoUmVuZGVyZXJUeXBlLklzQXNzaWduYWJsZUZyb20oYWN0dWFsKSkKICAgICAgICAgICAgICAgIHsKICAgICAgICAgICAgICAgICAgICBvYmplY3Qgc21mID0gVW5pdHlXb3JsZC5HZXRDb21wb25lbnQoUi5HZXQoc3QsICJnYW1lT2JqZWN0IiksIG1lc2hGaWx0ZXJUeXBlKTsKICAgICAgICAgICAgICAgICAgICBpZiAoc21mICE9IG51bGwpCiAgICAgICAgICAgICAgICAgICAgewogICAgICAgICAgICAgICAgICAgICAgICBvYmplY3QgZG1mID0gVW5pdHlXb3JsZC5BZGRDb21wb25lbnQoZGdvLCBtZXNoRmlsdGVyVHlwZSk7CiAgICAgICAgICAgICAgICAgICAgICAgIFIuU2V0KGRtZiwgInNoYXJlZE1lc2giLCBSLkdldChzbWYsICJzaGFyZWRNZXNoIikpOwogICAgICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgICAgICBkciA9IFVuaXR5V29ybGQuQWRkQ29tcG9uZW50KGRnbywgbWVzaFJlbmRlcmVyVHlwZSk7CiAgICAgICAgICAgICAgICB9CgogICAgICAgICAgICAgICAgaWYgKGRyID09IG51bGwpIGNvbnRpbnVlOwogICAgICAgICAgICAgICAgcm1hcFtzcl0gPSBkcjsKCiAgICAgICAgICAgICAgICBvYmplY3QgbWF0cyA9IFIuR2V0KHNyLCAic2hhcmVkTWF0ZXJpYWxzIik7CiAgICAgICAgICAgICAgICBpZiAocnVsZWQgJiYgdnIgIT0gbnVsbCkKICAgICAgICAgICAgICAgIHsKICAgICAgICAgICAgICAgICAgICBpZiAodnIuU3dpdGNoTWF0ZXJpYWxzICYmIHZyLk1hdGVyaWFsICE9IG51bGwpCiAgICAgICAgICAgICAgICAgICAgICAgIG1hdHMgPSBVbml0eVdvcmxkLk1hdGVyaWFsQXJyYXkodnIuTWF0ZXJpYWwsIE1hdGguTWF4KDEsIFVuaXR5V29ybGQuQXJyYXlMZW5ndGgobWF0cykpKTsKICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgIGVsc2UKICAgICAgICAgICAgICAgIHsKICAgICAgICAgICAgICAgICAgICBtYXRzID0gVW5pdHlXb3JsZC5NYWtlWHJheU1hdGVyaWFscyhtYXRzLCAwLjIyZik7CiAgICAgICAgICAgICAgICB9CgogICAgICAgICAgICAgICAgUi5TZXQoZHIsICJzaGFyZWRNYXRlcmlhbHMiLCBtYXRzKTsKICAgICAgICAgICAgICAgIFIuU2V0KGRyLCAiZW5hYmxlZCIsIHRydWUpOwogICAgICAgICAgICAgICAgY2xvbmVkKys7CiAgICAgICAgICAgIH0KCiAgICAgICAgICAgIGlmIChjbG9uZWQgPT0gMCkgdGhyb3cgbmV3IEludmFsaWRPcGVyYXRpb25FeGNlcHRpb24oIk5vIHRhcmdldCByZW5kZXJlcnMgY291bGQgYmUgY2xvbmVkIik7CiAgICAgICAgfQo='))
-          $helper = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('ICAgICAgICBpbnRlcm5hbCBzdGF0aWMgb2JqZWN0IE1ha2VYcmF5TWF0ZXJpYWxzKG9iamVjdCBtYXRzT2JqLGZsb2F0IGFscGhhKQogICAgICAgIHsKICAgICAgICAgICAgQXJyYXkgc3JjPW1hdHNPYmogYXMgQXJyYXk7CiAgICAgICAgICAgIGlmKHNyYz09bnVsbClyZXR1cm4gbWF0c09iajsKICAgICAgICAgICAgQXJyYXkgZHN0PUFycmF5LkNyZWF0ZUluc3RhbmNlKF9tYXRlcmlhbCxzcmMuTGVuZ3RoKTsKICAgICAgICAgICAgZm9yKGludCBpPTA7aTxzcmMuTGVuZ3RoO2krKykKICAgICAgICAgICAgewogICAgICAgICAgICAgICAgb2JqZWN0IG9yaWdpbmFsPXNyYy5HZXRWYWx1ZShpKTsKICAgICAgICAgICAgICAgIG9iamVjdCBtPUNsb25lTWF0ZXJpYWwob3JpZ2luYWwpOwogICAgICAgICAgICAgICAgaWYobT09bnVsbCl7ZHN0LlNldFZhbHVlKG9yaWdpbmFsLGkpO2NvbnRpbnVlO30KICAgICAgICAgICAgICAgIFNldE1hdGVyaWFsQ29sb3IobSwuNThmLC42OGYsLjYyZixhbHBoYSk7CiAgICAgICAgICAgICAgICB0cnkKICAgICAgICAgICAgICAgIHsKICAgICAgICAgICAgICAgICAgICBSLkNhbGwobSwiU2V0RmxvYXQiLG5ldyBvYmplY3RbXXsiX01vZGUiLDNmfSk7CiAgICAgICAgICAgICAgICAgICAgUi5DYWxsKG0sIlNldEludCIsbmV3IG9iamVjdFtdeyJfU3JjQmxlbmQiLDV9KTsKICAgICAgICAgICAgICAgICAgICBSLkNhbGwobSwiU2V0SW50IixuZXcgb2JqZWN0W117Il9Ec3RCbGVuZCIsMTB9KTsKICAgICAgICAgICAgICAgICAgICBSLkNhbGwobSwiU2V0SW50IixuZXcgb2JqZWN0W117Il9aV3JpdGUiLDB9KTsKICAgICAgICAgICAgICAgICAgICBSLkNhbGwobSwiRGlzYWJsZUtleXdvcmQiLG5ldyBvYmplY3RbXXsiX0FMUEhBVEVTVF9PTiJ9KTsKICAgICAgICAgICAgICAgICAgICBSLkNhbGwobSwiRW5hYmxlS2V5d29yZCIsbmV3IG9iamVjdFtdeyJfQUxQSEFCTEVORF9PTiJ9KTsKICAgICAgICAgICAgICAgICAgICBSLkNhbGwobSwiRGlzYWJsZUtleXdvcmQiLG5ldyBvYmplY3RbXXsiX0FMUEhBUFJFTVVMVElQTFlfT04ifSk7CiAgICAgICAgICAgICAgICAgICAgUi5TZXQobSwicmVuZGVyUXVldWUiLDMwMDApOwogICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgY2F0Y2h7fQogICAgICAgICAgICAgICAgZHN0LlNldFZhbHVlKG0saSk7CiAgICAgICAgICAgIH0KICAgICAgICAgICAgcmV0dXJuIGRzdDsKICAgICAgICB9Cg=='))
-          $pattern = '(?s)        private void CloneVisuals\(object sourceRoot, object visualRoot, Dictionary<object, object> tmap, Dictionary<object, object> rmap, Dictionary<object, VisualRule> rules\).*?(?=        private void HighlightHitModels)'
-          $src = [regex]::Replace($src, $pattern, $newClone + [Environment]::NewLine + [Environment]::NewLine, 1)
-          $src = $src.Replace('        internal static void SetMaterialColor', $helper + [Environment]::NewLine + '        internal static void SetMaterialColor')
-          [IO.File]::WriteAllText((Join-Path $PWD $path), $src, (New-Object Text.UTF8Encoding($false)))
-          $entry = 'build-src\GHPCLiveAARMod.cs'
-          $entrySrc = (Get-Content $entry -Raw).Replace('0.4.0','0.5.0')
-          [IO.File]::WriteAllText((Join-Path $PWD $entry), $entrySrc, (New-Object Text.UTF8Encoding($false)))
-
-      - name: Patch v0.6 robust AAR framing
-        shell: powershell
-        run: |
-          $path = 'build-src\LiveXrayCore.cs'
-          $src = Get-Content $path -Raw
-          $src = $src.Replace('0.5.0','0.6.0')
-          $fit = Get-Content 'live-xray-build\v060_fitcamera.csfrag' -Raw
-          $pattern = '(?s)        private void FitCameraAndLights\(object stageTransform, object visualRoot, XraySettings settings\).*?(?=        private void CreateShotLines)'
-          $src = [regex]::Replace($src, $pattern, $fit + [Environment]::NewLine + [Environment]::NewLine, 1)
-          [IO.File]::WriteAllText((Join-Path $PWD $path), $src, (New-Object Text.UTF8Encoding($false)))
-          $entry = 'build-src\GHPCLiveAARMod.cs'
-          $entrySrc = (Get-Content $entry -Raw).Replace('0.5.0','0.6.0')
-          [IO.File]::WriteAllText((Join-Path $PWD $entry), $entrySrc, (New-Object Text.UTF8Encoding($false)))
 
       - name: Safety assertions
         shell: powershell
@@ -108,10 +78,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Compiler failed: $LASTEXITCODE" }
           $hash = (Get-FileHash dist\GHPC_LiveAAR.dll -Algorithm SHA256).Hash
           $size = (Get-Item dist\GHPC_LiveAAR.dll).Length
-          "Version=0.6.0" | Set-Content dist\BUILD_INFO.txt
+          "Version=0.7.0" | Set-Content dist\BUILD_INFO.txt
           "AssemblyCSharpTargetSHA256=3321284967EC09971E0FB971ABC5D9B8E881F9EC61CD85EB90C5EDCCD11D8490" | Add-Content dist\BUILD_INFO.txt
           "MelonLoaderCompileTarget=0.6.1 net35" | Add-Content dist\BUILD_INFO.txt
-          "SourcePayloadSHA256=5F9E40808B2EDA3F565BCC90A7849577C3D8E5BE0DE8725610916C1ED22DF2D9" | Add-Content dist\BUILD_INFO.txt
+          "SourcePayloadSHA256=34717C4F2DBE928766FC75381BC4D278766B45C589D5B2651986679192B040DE" | Add-Content dist\BUILD_INFO.txt
           "SHA256=$hash" | Add-Content dist\BUILD_INFO.txt
           "Size=$size" | Add-Content dist\BUILD_INFO.txt
           Copy-Item build-src\GHPCLiveAARMod.cs dist\GHPCLiveAARMod.cs
@@ -120,6 +90,6 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: GHPC_LiveXray_AAR_v0.6.0
+          name: GHPC_LiveXray_AAR_v0.7.0
           path: dist/**
           if-no-files-found: error
