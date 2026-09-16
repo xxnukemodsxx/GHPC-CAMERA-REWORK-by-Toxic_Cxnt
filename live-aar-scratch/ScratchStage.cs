@@ -373,53 +373,133 @@ namespace GHPCNativeLiveAAR
             }
         }
 
-        private void CloneVehicleShell(object aarRootGo, object sourceRoot, object stageTransform, Dictionary<object, object> tmap, NativeCaptureState state)
+        private void CloneVehicleShell(object vehicleGo, object aarRootGo, object sourceRoot, object stageTransform, Dictionary<object, object> tmap, NativeCaptureState state)
         {
-            List<object> all = U.Components(aarRootGo, U.RendererType, true);
+            List<object> roots = CollectShellRoots(vehicleGo, aarRootGo);
             HashSet<object> native = new HashSet<object>(RefEq.Instance);
             foreach (object r in state.AarVisualRules.Keys) native.Add(r);
             foreach (object r in state.AarModelRenderers) native.Add(r);
             foreach (object r in state.DirectHitModelRenderers) native.Add(r);
 
-            for (int i = 0; i < all.Count; i++)
+            HashSet<object> seen = new HashSet<object>(RefEq.Instance);
+
+            for (int rootIndex = 0; rootIndex < roots.Count; rootIndex++)
             {
-                object sr = all[i];
-                if (sr == null || native.Contains(sr)) continue;
-                if (!R.Bool(sr, "enabled", false)) continue;
+                object rootGo = roots[rootIndex];
+                List<object> all = U.Components(rootGo, U.RendererType, true);
 
-                object st = R.Get(sr, "transform");
-                if (st == null) continue;
-                string n = (R.Str(st, "name") ?? R.Str(sr, "name") ?? "").ToLowerInvariant();
-                if (n.Contains("shadow") || n.Contains("decal") || n.Contains("dust") ||
-                    n.Contains("smoke") || n.Contains("particle") || n.Contains("marker") ||
-                    n.Contains("icon") || n.Contains("text") || n.Contains("canvas"))
-                    continue;
+                for (int i = 0; i < all.Count; i++)
+                {
+                    object sr = all[i];
+                    if (sr == null || seen.Contains(sr) || native.Contains(sr)) continue;
+                    seen.Add(sr);
+                    if (!R.Bool(sr, "enabled", false)) continue;
 
-                object b = R.Get(sr, "bounds");
-                object ext = b == null ? null : R.Get(b, "extents");
-                object cen = b == null ? null : R.Get(b, "center");
-                if (ext == null || cen == null) continue;
+                    object st = R.Get(sr, "transform");
+                    if (st == null) continue;
 
-                float er = U.Mag(ext);
-                if (er < .03f || er > 10f) continue;
+                    string n = ((R.Str(st, "name") ?? "") + " " + (R.Str(sr, "name") ?? "")).ToLowerInvariant();
+                    if (LooksNonShell(n)) continue;
 
-                object lc = R.Call(sourceRoot, "InverseTransformPoint", cen);
-                if (lc == null || U.Mag(lc) > 14f) continue;
+                    object b = R.Get(sr, "bounds");
+                    object ext = b == null ? null : R.Get(b, "extents");
+                    object cen = b == null ? null : R.Get(b, "center");
+                    if (ext == null || cen == null) continue;
 
-                object dt;
-                if (!tmap.TryGetValue(st, out dt)) continue;
+                    float er = U.Mag(ext);
+                    if (er < .035f || er > 12f) continue;
 
-                object dr = CloneRenderer(sr, dt, tmap);
-                if (dr == null) continue;
+                    object lc = R.Call(sourceRoot, "InverseTransformPoint", cen);
+                    if (lc == null || U.Mag(lc) > 16f) continue;
 
-                object dgo = R.Get(dt, "gameObject");
-                if (dgo != null) R.Set(dgo, "layer", _aarLayer);
+                    object dt = null;
+                    tmap.TryGetValue(st, out dt);
 
-                R.Set(dr, "sharedMaterials", R.Get(sr, "sharedMaterials"));
-                R.Set(dr, "enabled", true);
-                state.RendererMap[sr] = dr;
-                state.ShellRendererCount++;
+                    object dr = dt != null
+                        ? CloneRenderer(sr, dt, tmap)
+                        : CloneLooseRenderer(sr, sourceRoot, stageTransform, tmap);
+
+                    if (dr == null) continue;
+
+                    object dtr = R.Get(dr, "transform");
+                    object dgo = dtr == null ? null : R.Get(dtr, "gameObject");
+                    if (dgo != null) R.Set(dgo, "layer", _aarLayer);
+
+                    object mats = R.Get(sr, "sharedMaterials");
+                    Array shell = U.TintedMaterials(mats, .48f, .50f, .52f, 1f);
+                    if (shell != null) mats = shell;
+
+                    R.Set(dr, "sharedMaterials", mats);
+                    R.Set(dr, "enabled", true);
+                    state.RendererMap[sr] = dr;
+                    state.ShellRendererCount++;
+                }
             }
+        }
+
+        private List<object> CollectShellRoots(object vehicleGo, object aarRootGo)
+        {
+            List<object> roots = new List<object>();
+            HashSet<object> seen = new HashSet<object>(RefEq.Instance);
+
+            AddRoot(roots, seen, aarRootGo);
+            AddRoot(roots, seen, vehicleGo);
+
+            Type lateType = R.Find("LateFollowTarget");
+            if (lateType == null) return roots;
+
+            List<object> lateTargets = U.Components(vehicleGo, lateType, true);
+            object directLate = U.GetComponent(vehicleGo, lateType);
+            if (directLate != null) lateTargets.Insert(0, directLate);
+
+            for (int i = 0; i < lateTargets.Count; i++)
+            {
+                object late = lateTargets[i];
+                if (late == null) continue;
+
+                List<object> followers = R.List(R.Get(late, "_lateFollowers"));
+                if (followers.Count == 0) followers = R.List(R.Get(late, "LateFollowers"));
+
+                for (int j = 0; j < followers.Count; j++)
+                {
+                    object follower = followers[j];
+                    if (follower == null) continue;
+                    object tr = R.Get(follower, "transform");
+                    if (tr == null)
+                    {
+                        object fgo = R.Get(follower, "gameObject");
+                        tr = fgo == null ? null : R.Get(fgo, "transform");
+                    }
+
+                    object cur = tr;
+                    for (int up = 0; cur != null && up < 5; up++)
+                    {
+                        object go = R.Get(cur, "gameObject");
+                        if (go != null) AddRoot(roots, seen, go);
+                        cur = R.Get(cur, "parent");
+                    }
+                }
+            }
+
+            return roots;
+        }
+
+        private void AddRoot(List<object> roots, HashSet<object> seen, object go)
+        {
+            if (go == null || seen.Contains(go)) return;
+            seen.Add(go);
+            roots.Add(go);
+        }
+
+        private bool LooksNonShell(string n)
+        {
+            if (string.IsNullOrEmpty(n)) return false;
+            return n.Contains("shadow") || n.Contains("decal") || n.Contains("dust") ||
+                   n.Contains("smoke") || n.Contains("particle") || n.Contains("marker") ||
+                   n.Contains("icon") || n.Contains("text") || n.Contains("canvas") ||
+                   n.Contains("crew") || n.Contains("ammo") || n.Contains("rack") ||
+                   n.Contains("interior") || n.Contains("internal") || n.Contains("xray") ||
+                   n.Contains("aar") || n.Contains("hitmodel") || n.Contains("damage");
         }
 
         private object CloneLooseRenderer(object sr, object sourceRoot, object stageTransform, Dictionary<object, object> tmap)
