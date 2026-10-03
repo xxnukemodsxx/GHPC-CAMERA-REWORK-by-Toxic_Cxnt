@@ -1,4 +1,4 @@
-name: Fulda PIL v1.5.1 build
+name: Fulda PIL v1.5.2 build
 
 on:
   push:
@@ -19,6 +19,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path src, Build, out | Out-Null
           [IO.File]::WriteAllBytes((Join-Path $PWD 'src.tar.gz'), $bytes)
           tar -xzf src.tar.gz -C src
+          $mods = @('src\\FuldaExpandedArsenal\\Mod.cs','src\\PILExpandedArsenal\\Mod.cs')
+          foreach ($m in $mods) {
+            $t = [IO.File]::ReadAllText((Join-Path $PWD $m))
+            $t = $t.Replace('1.5.1','1.5.2').Replace('runtime151','runtime152')
+            $t = $t -replace '            if \(savePending\) savePending = !Prefs\.SaveAll\(\);\r?\n',''
+            [IO.File]::WriteAllText((Join-Path $PWD $m), $t)
+          }
 
       - name: Compile
         shell: cmd
@@ -44,6 +51,6 @@ jobs:
       - name: Upload DLLs
         uses: actions/upload-artifact@v4
         with:
-          name: fulda-pil-v151-dlls
+          name: fulda-pil-v152-dlls
           path: out\*.dll
           if-no-files-found: error
